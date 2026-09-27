@@ -867,15 +867,8 @@ class OpenAIResponsesToolOps(BaseToolOps):
             IR ToolResultPart.
         """
         output = provider_tool_result.get("output", "")
-        # Try to parse JSON output
-        if isinstance(output, str):
-            try:
-                parsed = json.loads(output)
-                output = parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        # Normalize provider-specific content blocks to IR format
+        # String outputs are opaque tool data, even when they contain JSON.
+        # Only an actual list represents multimodal content blocks.
         if isinstance(output, list):
             from .content_ops import OpenAIResponsesContentOps
 
