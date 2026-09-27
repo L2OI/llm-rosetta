@@ -8,6 +8,12 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## [Unreleased]
 
+### Fixed — Responses tool history
+
+- Preserve string-valued tool outputs verbatim, including JSON-looking strings. Only actual list-valued outputs are normalized as multimodal content blocks. This changes the previous implicit JSON-decoding behavior; callers requiring structured multimodal output should supply an array, not a JSON-encoded string. See [#765](https://github.com/Oaklight/llm-rosetta/pull/765).
+- Preserve the association of same-turn assistant reasoning, text, and tool calls during Responses → IR → Chat request conversion. User/system/developer/tool-result boundaries and conflicting phase/status metadata remain separate; reasoning is not invented or copied between turns. See [#766](https://github.com/Oaklight/llm-rosetta/pull/766).
+
+
 ### Added — Decision paradigm
 
 - **Decision model paradigm** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705)): new model category alongside chat, embedding, and rerank for probabilistic structured decisions. Decision models evaluate state against typed questions and return calibrated probability distributions — no text generation. Three IR primitives: `noul` (P(true) ∈ [0,1]), `choice` (categorical distribution), `score` (ordinal distribution). Includes `BaseDecisionConverter` ABC, `TypeSafeDecisionConverter` for the TypeSafe System One (Jev) API, provider shim, auto-detection, and gateway routes (`/v1/decision`, `/v1/systemone`).
