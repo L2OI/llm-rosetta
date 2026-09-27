@@ -533,14 +533,14 @@ class TestOpenAIResponsesToolOps:
         assert result["result"] == "Result data"
 
     def test_p_tool_result_to_ir_json_output(self):
-        """Test p_tool_result_to_ir parses JSON output."""
+        """Keep JSON-looking text opaque rather than coercing its type."""
         provider_tr = {
             "type": "function_call_output",
             "call_id": "call_json",
             "output": '{"temp": 25}',
         }
         result = OpenAIResponsesToolOps.p_tool_result_to_ir(provider_tr)
-        assert result["result"] == {"temp": 25}
+        assert result["result"] == '{"temp": 25}'
 
     def test_p_tool_result_to_ir_with_error(self):
         """Test p_tool_result_to_ir with is_error flag."""
@@ -566,18 +566,16 @@ class TestOpenAIResponsesToolOps:
         assert restored["result"] == original["result"]
 
     def test_p_tool_result_to_ir_converts_input_image_to_ir(self):
-        """Test input_image in parsed output → IR ImagePart."""
+        """Test input_image in an actual output array → IR ImagePart."""
         provider_tr = {
             "type": "function_call_output",
             "call_id": "call_img",
-            "output": json.dumps(
-                [
-                    {
-                        "type": "input_image",
-                        "image_url": "data:image/png;base64,AAAA",
-                    }
-                ]
-            ),
+            "output": [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,AAAA",
+                }
+            ],
         }
         result = OpenAIResponsesToolOps.p_tool_result_to_ir(provider_tr)
         assert isinstance(result["result"], list)
