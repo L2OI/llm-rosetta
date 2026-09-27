@@ -406,9 +406,9 @@ class OpenAIResponsesMessageOps(BaseMessageOps):
             if item_type == "message":
                 new_message = self._p_message_to_ir(item)
                 if new_message:
-                    if current_message:
-                        ir_input.append(current_message)
-                    current_message = new_message
+                    current_message = self._append_message(
+                        ir_input, current_message, new_message
+                    )
 
             elif item_type in self._TOOL_CALL_TYPES:
                 tool_call = self.tool_ops.p_tool_call_to_ir(item)
@@ -446,6 +446,37 @@ class OpenAIResponsesMessageOps(BaseMessageOps):
             ir_input.append(current_message)
 
         return ir_input
+
+    @classmethod
+    def _append_message(
+        cls, ir_input: list, current: dict | None, following: dict
+    ) -> dict:
+        """Keep compatible assistant items in one turn without crossing roles."""
+        if current is not None and cls._can_merge_assistant_messages(
+            current, following
+        ):
+            current["content"].extend(following["content"])
+            if following.get("provider_metadata"):
+                current.setdefault("provider_metadata", {}).update(
+                    following["provider_metadata"]
+                )
+            return current
+        if current:
+            ir_input.append(current)
+        return following
+
+    @staticmethod
+    def _can_merge_assistant_messages(current: dict | None, following: dict) -> bool:
+        if (
+            current is None
+            or current.get("role") != "assistant"
+            or following.get("role") != "assistant"
+        ):
+            return False
+        # Explicitly different phases/statuses remain separate output messages.
+        before = current.get("provider_metadata") or {}
+        after = following.get("provider_metadata") or {}
+        return all(before[key] == after[key] for key in before.keys() & after.keys())
 
     @staticmethod
     def _make_system_event(item: dict[str, Any]) -> dict[str, Any]:
