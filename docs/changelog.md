@@ -8,6 +8,12 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## [未发布]
 
+### 修复 — Responses 工具历史
+
+- 原样保留字符串工具输出，包括内容为 JSON 的字符串；仅将原本就是列表的输出转换为多模态内容块。此项改变了此前隐式解析 JSON 字符串的行为；需要结构化多模态输出时应传入数组，而不是 JSON 编码的字符串。参见 [#765](https://github.com/Oaklight/llm-rosetta/pull/765)。
+- 在 Responses → IR → Chat 请求转换中保留同轮 assistant 思考、文字和工具调用的关联。用户/系统/developer/工具结果边界，以及冲突的 phase/status 元数据仍保持分离；不会伪造思考内容或跨轮复制。参见 [#766](https://github.com/Oaklight/llm-rosetta/pull/766)。
+
+
 ### 新增 — Decision 范式
 
 - **Decision 模型范式** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705))：与 chat、embedding、rerank 并列的新模型类别，用于概率化结构决策。Decision 模型对 state 执行类型化 questions，返回校准的概率分布——不涉及文本生成。三种 IR 原语：`noul`（P(true) ∈ [0,1]）、`choice`（类别分布）、`score`（有序分布）。包含 `BaseDecisionConverter` 抽象基类、`TypeSafeDecisionConverter`（TypeSafe System One / Jev API）、provider shim、自动检测和网关路由（`/v1/decision`、`/v1/systemone`）。
