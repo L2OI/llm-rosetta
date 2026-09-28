@@ -523,6 +523,31 @@ class FidelityBaseline:
     def __contains__(self, key: object) -> bool:
         return key in self._data[_ENTRIES_TOP_KEY]
 
+    # -- pruning ------------------------------------------------------------
+
+    def purge(self, keys: Sequence[str]) -> int:
+        """Remove baseline entries by key and rewrite the file.
+
+        Args:
+            keys: Keys to drop from the baseline.
+
+        Returns:
+            Number of keys actually removed (already-absent keys are ignored).
+        """
+        with _baseline_lock(self.path):
+            data = self._read_latest()
+            entries = data[_ENTRIES_TOP_KEY]
+            removed = 0
+            for key in keys:
+                if entries.pop(key, None) is not None:
+                    removed += 1
+            if removed:
+                self._write_atomic(data)
+                self._data = data
+            else:
+                self._data = data
+        return removed
+
     # -- comparison ---------------------------------------------------------
 
     def compare(

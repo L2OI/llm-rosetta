@@ -769,3 +769,51 @@ class TestCheckAgainstBaseline:
             checker=checker,
         )
         assert report.is_empty
+
+
+# ============================================================================
+# Baseline pruning
+# ============================================================================
+
+
+class TestPurge:
+    def test_purge_removes_keys_and_returns_count(self, tmp_path: Path) -> None:
+        path = tmp_path / "b.json"
+        baseline = FidelityBaseline(path)
+        for name in ("key-a", "key-b", "key-c"):
+            baseline.compare(
+                name, [FidelityDiff(path="p", kind="missing")], update=True
+            )
+        assert len(baseline.keys()) == 3
+        removed = baseline.purge(["key-a", "key-c"])
+        assert removed == 2
+        assert baseline.keys() == ["key-b"]
+        # Survives restart.
+        assert FidelityBaseline(path).keys() == ["key-b"]
+
+    def test_purge_absent_keys_returns_zero(self, tmp_path: Path) -> None:
+        path = tmp_path / "b.json"
+        baseline = FidelityBaseline(path)
+        baseline.compare(KEY, [_entry("a")], update=True)
+        removed = baseline.purge(["nonexistent"])
+        assert removed == 0
+        assert baseline.keys() == [KEY]
+
+    def test_purge_all_keys_leaves_empty_baseline(self, tmp_path: Path) -> None:
+        path = tmp_path / "b.json"
+        baseline = FidelityBaseline(path)
+        baseline.compare("k1", [_entry("a")], update=True)
+        baseline.compare("k2", [_entry("b")], update=True)
+        removed = baseline.purge(["k1", "k2"])
+        assert removed == 2
+        assert baseline.keys() == []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert raw["entries"] == {}
+
+    def test_purge_does_not_write_when_nothing_removed(self, tmp_path: Path) -> None:
+        path = tmp_path / "b.json"
+        baseline = FidelityBaseline(path)
+        baseline.compare(KEY, [_entry("a")], update=True)
+        mtime = path.stat().st_mtime_ns
+        baseline.purge(["no-such-key"])
+        assert path.stat().st_mtime_ns == mtime

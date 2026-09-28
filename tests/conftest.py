@@ -29,10 +29,11 @@ def _clear_tool_conversion_caches():
     ]:
         corrupted = cache.check_integrity()
         if corrupted:
-            pytest.fail(
+            msg = (
                 f"Cache mutation detected in {name}_cache: "
                 f"keys {corrupted} were modified after caching. "
                 f"Cached values must not be mutated — see cache.py docstring."
             )
+            pytest.fail(msg)  # ty: ignore[invalid-argument-type]
 
     clear_all_caches()
