@@ -251,6 +251,7 @@ function setCleanupMode(mode) {
 }
 
 function openCleanupConfirm(target) {
+  closeModal('settingsPopup');
   _cleanupTarget = target || 'all';
   _cleanupMode = 'olderThan';
   const daysEl = target === 'ops' ? 'settingsOpsMaxAgeDays' : 'settingsMaxAgeDays';
@@ -370,6 +371,7 @@ async function doVacuum() {
 
 // --- Error Dump Export ---
 function openExportDumpsModal() {
+  closeModal('settingsPopup');
   document.getElementById('exportStartDate').value = '';
   document.getElementById('exportEndDate').value = '';
   openModal('exportDumpsModal');
