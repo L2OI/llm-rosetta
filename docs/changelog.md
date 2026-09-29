@@ -57,6 +57,7 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Dark theme text visibility** — `--accent-on` CSS variable used for text on accent backgrounds (seg-controls, primary buttons, chips, login button) instead of hardcoded `#fff`, fixing invisible text on minimal dark theme.
 - **Test dropdown clipping** — test menu dropdown uses `position: fixed` with JS-computed positioning to avoid being clipped by table `overflow` container.
 - **Package data glob** — `pyproject.toml` updated from `js/*.js` to `js/**/*.js` to include JS files in subdirectories after reorganization.
+- **Models tab blank** (PR [#816](https://github.com/Oaklight/llm-rosetta/pull/816)) — `_checkRoutingLoops()` called `api()` instead of `api.get()`, causing a `TypeError` silently swallowed by `loadConfig()`'s `try/catch`. The Models tab rendered empty on all deployments after PR [#784](https://github.com/Oaklight/llm-rosetta/pull/784).
 
 ### Gateway — Multi-provider routing & infrastructure
 
