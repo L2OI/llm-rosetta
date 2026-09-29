@@ -11,6 +11,9 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 ### Added — Decision paradigm
 
 - **Decision model paradigm** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705)): new model category alongside chat, embedding, and rerank for probabilistic structured decisions. Decision models evaluate state against typed questions and return calibrated probability distributions — no text generation. Three IR primitives: `noul` (P(true) ∈ [0,1]), `choice` (categorical distribution), `score` (ordinal distribution). Includes `BaseDecisionConverter` ABC, `TypeSafeDecisionConverter` for the TypeSafe System One (Jev) API, provider shim, auto-detection, and gateway routes (`/v1/decision`, `/v1/systemone`).
+- **LLM-backed decision converter** (PR [#709](https://github.com/Oaklight/llm-rosetta/pull/709)): decision questions answered via chat structured output — any LLM becomes a decision backend by reformulating questions as JSON-schema-constrained chat completions.
+- **Reranker and embedding-backed decision converters** (PR [#711](https://github.com/Oaklight/llm-rosetta/pull/711)): `choice` questions answered via reranker relevance scores; `noul` questions via embedding cosine similarity. Enables non-LLM models as decision backends.
+- **Registry-based gateway integration** (PR [#718](https://github.com/Oaklight/llm-rosetta/pull/718)): decision paradigm wired through the model type registry with auto-registered routes, telemetry, and admin UI support.
 
 ### Gateway — Middleware unification & model type registry
 
@@ -77,19 +80,119 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ### Gateway — ALCF token management
 
+- **Dynamic API key refresh via `token_command`** (PR [#673](https://github.com/Oaklight/llm-rosetta/pull/673)): new provider config field `token_command` that runs an external command to obtain API keys. Background asyncio task periodically re-runs the command and atomically swaps keys in KeyRing. Designed for providers with expiring tokens (ALCF/Globus, GCP Vertex, Azure AD).
+- **ALCF provider shims and auth script** (PR [#675](https://github.com/Oaklight/llm-rosetta/pull/675)): three grouped provider shims for ALCF inference clusters (sophia, metis, minerva) plus a zero-dependency Globus OAuth2 token management script with headless login, auto-refresh, and multi-user support.
+- **Absolute URL in `models_path`** (PR [#679](https://github.com/Oaklight/llm-rosetta/pull/679)): support fully-qualified URLs in `models_path` for providers whose model list endpoint is on a different host (e.g. ALCF).
+- **ALCF reasoning, tool support, and IR transforms** (PR [#689](https://github.com/Oaklight/llm-rosetta/pull/689)): per-model reasoning config, tool support flags, and IR request/response transforms for ALCF shims.
 - **Reactive 401 token refresh with retry** (PR [#680](https://github.com/Oaklight/llm-rosetta/pull/680)): when an upstream provider returns 401, the gateway now reactively refreshes the token via `token_command` and retries the request once, instead of waiting up to 1 hour for the next scheduled refresh cycle. Per-provider async locking and a 5-second debounce prevent thundering-herd refreshes from concurrent 401 bursts.
 - **ALCF 30-day Globus session-policy detection** (PR [#680](https://github.com/Oaklight/llm-rosetta/pull/680)): detects ALCF's 30-day forced re-authentication 401 (body containing "internal policies" / "high-assurance") and returns a clear error message directing the user to re-authenticate, instead of pointlessly retrying with the same token.
 - **Harden ALCF token refresh handling** (PR [#681](https://github.com/Oaklight/llm-rosetta/pull/681)): preserve the existing refresh token when the OAuth server omits it from the refresh response (per RFC 6749 §6), guard against empty/null refresh token values, and extract `_show_status_dir` helper with proper directory validation. Contributed by [@rajeeja](https://github.com/rajeeja).
+
+### Shims — New transforms & provider support
+
+- **`default_tool_description` transform** (PR [#684](https://github.com/Oaklight/llm-rosetta/pull/684)): shim-level transform that injects a placeholder description for tools with empty descriptions, working around vLLM endpoints that reject empty `description` fields.
+- **`response_body_transforms`** (PR [#685](https://github.com/Oaklight/llm-rosetta/pull/685)): new shim field for post-response transforms. Ships with a `harmony_tool_call_safeguard` that fixes malformed tool call JSON from Harmony/vLLM endpoints.
+- **Argo and DeepSeek `openai_responses` shims** (PR [#799](https://github.com/Oaklight/llm-rosetta/pull/799)): Responses API shims for Argo (with per-model request transforms from live probe data) and DeepSeek (with `reasoning_content` → `reasoning.content` rename).
+- **ProviderShim field grouping** (PR [#716](https://github.com/Oaklight/llm-rosetta/pull/716)): refactored `ProviderShim` fields into `ConnectionConfig` and `ToolsConfig` grouped dataclasses for clearer organization.
+- **ARGO transforms update** (PR [#812](https://github.com/Oaklight/llm-rosetta/pull/812)): updated ARGO request transforms based on per-model probe results, adding model-specific field stripping and defaults.
 
 ### Shims — Bug fixes & testing
 
 - **Fix `max_tool_description_length` not loaded from provider YAML** (PR [#667](https://github.com/Oaklight/llm-rosetta/pull/667)): the YAML loader silently dropped the declared threshold, causing tool description relocation to never fire for shim-level defaults. Contributed by [@caidao22](https://github.com/caidao22).
 - **Guard test for YAML loader field coverage** (PR [#674](https://github.com/Oaklight/llm-rosetta/pull/674)): AST-based CI test that verifies every `ProviderShim` dataclass field is present in the loader constructor call, preventing silent field omissions. Also fixes `hoist_system_messages` not being loaded from YAML.
 
+### Gateway — Routing & resilience
+
+- **Upstream soft-error detection** (PR [#708](https://github.com/Oaklight/llm-rosetta/pull/708)): detect upstream 200-but-error responses (e.g. rate limit HTML pages, JSON error bodies with HTTP 200) via shim-configured regex patterns. Matched responses are re-wrapped as proper error responses with the correct status code.
+- **Deferred startup** (PR [#693](https://github.com/Oaklight/llm-rosetta/pull/693)): blocking startup work (connectivity checks, model fetches) moved to background tasks so the gateway starts accepting requests immediately. Startup status visible in admin UI.
+- **Routing loop detection** (PR [#784](https://github.com/Oaklight/llm-rosetta/pull/784)): hop-count middleware that detects and breaks routing loops when multiple gateway instances are chained. Adds `X-Rosetta-Hops` header, rejects requests exceeding the configurable max hop count.
+- **Same-format provider affinity** (PR [#785](https://github.com/Oaklight/llm-rosetta/pull/785)): when a model is available from multiple providers, prefer the provider whose native format matches the client request format to avoid unnecessary conversion overhead.
+- **Provider weight UI and cache-aware affinity** (PR [#770](https://github.com/Oaklight/llm-rosetta/pull/770)): admin UI for editing per-provider weights in multi-provider models. Cache-aware affinity routing considers provider-side prompt cache hit probability when selecting upstream.
+- **Rendezvous hashing for key affinity** (PR [#676](https://github.com/Oaklight/llm-rosetta/pull/676)): replaced modular key selection with rendezvous hashing so adding/removing a key only disrupts ~1/n of existing affinity mappings, preserving prompt cache locality across `token_command` refreshes.
+
+### Gateway — Fidelity verification
+
+- **Persistent fidelity baselines** (PR [#772](https://github.com/Oaklight/llm-rosetta/pull/772)): store per-model round-trip conversion baselines in SQLite for regression detection. When a request is converted A→IR→B→IR→A, the result is compared against the stored baseline to detect fidelity drift.
+- **Always-on fidelity shadow diff** (PR [#796](https://github.com/Oaklight/llm-rosetta/pull/796)): for same-format routes (e.g. OpenAI→OpenAI via different providers), automatically run a shadow diff comparing the pre-conversion and post-round-trip request bodies. Diffs are logged as error dumps for investigation.
+
+### Gateway — Performance & stability
+
+- **Async persistence via aiosqlite** (PR [#778](https://github.com/Oaklight/llm-rosetta/pull/778)): converted all synchronous SQLite writes to async via aiosqlite to prevent event loop blocking on the request path (Issue [#775](https://github.com/Oaklight/llm-rosetta/issues/775)).
+- **O(n²) → O(1) prune queries** (PR [#782](https://github.com/Oaklight/llm-rosetta/pull/782)): replaced O(n²) `DELETE WHERE rowid NOT IN (SELECT ... ORDER BY ... LIMIT ...)` retention queries with rowid-based batch deletion, fixing CPU spikes on large databases (Issue [#781](https://github.com/Oaklight/llm-rosetta/issues/781)).
+- **O(1) metadata store eviction** (PR [#783](https://github.com/Oaklight/llm-rosetta/pull/783)): replaced O(n) linear scan eviction in the in-memory metadata store with O(1) using insertion-ordered dict.
+- **fd exhaustion prevention** (PR [#774](https://github.com/Oaklight/llm-rosetta/pull/774)): Docker Compose now sets `ulimits` to prevent file descriptor exhaustion in the gateway container (Issue [#773](https://github.com/Oaklight/llm-rosetta/issues/773)).
+- **Close AsyncClient in connectivity check** (PR [#777](https://github.com/Oaklight/llm-rosetta/pull/777)): fix CLOSE_WAIT socket leak from unclosed `httpx.AsyncClient` in provider connectivity checks.
+
+### Gateway — Observability
+
+- **Cache and reasoning token tracking** (PR [#702](https://github.com/Oaklight/llm-rosetta/pull/702)): track `cache_creation_input_tokens`, `cache_read_input_tokens`, and `reasoning_tokens` across the full stack — IR extraction, request log, metrics counters, and admin UI token breakdown.
+- **TTFB metrics and client disconnect tracking** (PR [#755](https://github.com/Oaklight/llm-rosetta/pull/755)): time-to-first-byte latency tracking via httpserver lifecycle hooks. Detects and logs client disconnects during streaming.
+- **TracingProfiler** (PR [#756](https://github.com/Oaklight/llm-rosetta/pull/756)): replaced pyinstrument with a vendored zerodep tracing profiler. Toggle via admin UI.
+- **Profiling concurrency guard** (PR [#779](https://github.com/Oaklight/llm-rosetta/pull/779)): prevent concurrent profiling sessions from corrupting each other; fix `capture_state` wiring.
+
+### Converters — Tool namespace round-trip
+
+- **Bidirectional tool namespace mapping** (PR [#753](https://github.com/Oaklight/llm-rosetta/pull/753)): `ToolNameMap` that translates tool names between provider naming conventions (e.g. OpenAI's `function_name` vs Anthropic's `module__function_name`). Handles collision-free flattening, round-trip preservation, `tool_choice` and `allowed_tools` rewriting, and warns on unresolvable conflicts.
+
+### Converters — OpenAI Responses fixes
+
+- **Preserve string tool outputs** (PR [#765](https://github.com/Oaklight/llm-rosetta/pull/765)): stop JSON-coercing string tool call outputs — pass them through as-is when they are valid strings, not JSON objects.
+- **Keep reasoning with same-turn text and tools** (PR [#766](https://github.com/Oaklight/llm-rosetta/pull/766)): reasoning content was dropped when the same assistant turn also contained text or tool calls. Now preserved as a separate IR part.
+- **Extract DeepSeek reasoning text** (PR [#788](https://github.com/Oaklight/llm-rosetta/pull/788)): handle DeepSeek's `reasoning_content` field nested inside a content array, extracting it into IR reasoning parts.
+- **Preserve response-level fields and tool definition fidelity** (PR [#792](https://github.com/Oaklight/llm-rosetta/pull/792)): response-level fields (`temperature`, `top_p`, `metadata`, etc.) and tool definition properties (`strict`, `output_schema`) now round-trip through IR without loss.
+- **Carry `.done`-only function_call arguments** (PR [#800](https://github.com/Oaklight/llm-rosetta/pull/800)): when a streaming function_call arrives with arguments only in the `.done` event (no prior deltas), the arguments are now correctly captured into the IR.
+- **Emit residual delta for `custom_tool_call_input.done`** (PR [#810](https://github.com/Oaklight/llm-rosetta/pull/810)): same pattern as #800 applied to `custom_tool_call_input.done` events — arguments that arrive only in the `.done` frame are now emitted as a final delta (Issue [#803](https://github.com/Oaklight/llm-rosetta/issues/803)).
+- **Forward request-only fields via extensions** (PR [#800](https://github.com/Oaklight/llm-rosetta/pull/800), [#792](https://github.com/Oaklight/llm-rosetta/pull/792)): request fields like `frequency_penalty`, `presence_penalty`, `store`, `previous_response_id` forwarded through IR extensions for downstream converters to consume.
+
+### Converters — Other fixes
+
+- **Tolerate null stream deltas** (PR [#776](https://github.com/Oaklight/llm-rosetta/pull/776)): OpenAI Chat stream chunks with `delta: null` (instead of `delta: {}`) no longer crash the converter.
+- **Drop `budget_tokens` from adaptive thinking** (PR [#805](https://github.com/Oaklight/llm-rosetta/pull/805)): Anthropic rejects `budget_tokens` when `thinking.type` is `adaptive`; the field is now stripped for models using adaptive thinking mode.
+- **Preserve multi-branch anyOf/oneOf unions** (PR [#747](https://github.com/Oaklight/llm-rosetta/pull/747)): schema sanitization for Vertex AI no longer collapses multi-branch `anyOf`/`oneOf` unions — only single-branch wrappers are unwrapped.
+- **`BaseSimpleConverter` extraction** (PR [#745](https://github.com/Oaklight/llm-rosetta/pull/745)): extracted common base from embedding, rerank, and decision converter base classes to eliminate code duplication.
+- **Pipeline orchestration moved to lib** (PR [#746](https://github.com/Oaklight/llm-rosetta/pull/746)): `DecisionConversionPipeline` and orchestration logic moved from gateway to the library layer so it can be used outside the gateway.
+
+### Admin — Multi-provider management
+
+- **Multi-provider model display** (PR [#764](https://github.com/Oaklight/llm-rosetta/pull/764)): models tab shows all providers for multi-provider models with individual weight, type, and status. Inline editing for provider weights and enable/disable toggles.
+- **Fetch modal multi-provider support** (PR [#694](https://github.com/Oaklight/llm-rosetta/pull/694)): "Fetch Models" dialog can add providers to existing models, not just create new ones.
+- **Merge on rename collision** (PR [#698](https://github.com/Oaklight/llm-rosetta/pull/698)): renaming a model to an existing name now merges providers instead of failing.
+- **Parallelize startup fetches** (PR [#763](https://github.com/Oaklight/llm-rosetta/pull/763)): admin UI fires config, metrics, and provider requests concurrently to eliminate the blank-screen delay on load.
+
+### Admin — Metrics & observability
+
+- **Token usage modal** (PR [#759](https://github.com/Oaklight/llm-rosetta/pull/759)): click a model's token count to see a breakdown (prompt, completion, cache, reasoning) with rolling 24-hour stats. Badge column fix for multi-provider models.
+- **Multi-window rate limiting** (PR [#760](https://github.com/Oaklight/llm-rosetta/pull/760)): `CompositeLimiter` supports multiple sliding windows (e.g. 10/min + 100/hour). Rate limit config accepts comma-separated window specs. Admin UI introspection via `GET /admin/api/rate-limits`.
+- **Status code filter combobox** (PR [#688](https://github.com/Oaklight/llm-rosetta/pull/688)): request log filter replaced hardcoded status code presets with a combobox supporting custom input.
+- **Replace `error_max` with error dump cap** (PR [#761](https://github.com/Oaklight/llm-rosetta/pull/761)): deprecated `error_max` config key replaced with `error_dump_cap`; old key emits a deprecation warning.
+
+### Admin — Auth & UX fixes
+
+- **Replace HMAC admin auth with session store** (PR [#808](https://github.com/Oaklight/llm-rosetta/pull/808)): admin authentication moved from HMAC token validation to a server-side session store. Internal token accepted for admin API access from trusted services.
+- **Resolve shim defaults** (PR [#692](https://github.com/Oaklight/llm-rosetta/pull/692)): provider edit modal pre-fills `base_url` and `api_key_env` from shim defaults; connectivity test uses resolved values.
+- **Fix provider logo resolution and toast timer** (PR [#804](https://github.com/Oaklight/llm-rosetta/pull/804)): provider logo lookup now checks shim chain correctly; multiple rapid toasts no longer cancel each other's timers.
+- **Raise toast z-index** (PR [#806](https://github.com/Oaklight/llm-rosetta/pull/806)): toast notifications now appear above settings popup overlay.
+- **Fix model menu and bulk selection** (PR [#714](https://github.com/Oaklight/llm-rosetta/pull/714)): model "⋯" context menu and bulk action bar fixed to respond correctly after data mutations.
+- **Metrics counter consistency** (PR [#713](https://github.com/Oaklight/llm-rosetta/pull/713)): metrics counters now update correctly after config saves, model deletions, and provider toggles.
+
+### Changed — Converter internals
+
+- **Rename passthrough → baseline** (PR [#793](https://github.com/Oaklight/llm-rosetta/pull/793)): renamed the "passthrough" pipeline concept to "baseline" to better reflect its role as the reference point for fidelity comparison.
+- **Extract `_emit_residual_tool_call_delta` helper** (PR [#811](https://github.com/Oaklight/llm-rosetta/pull/811)): extracted the residual delta emission logic into a shared helper to reduce duplication across streaming event handlers.
+- **Use zerodep validate for decision schemas** (PR [#717](https://github.com/Oaklight/llm-rosetta/pull/717)): decision converter schema generation switched from manual construction to the vendored `zerodep.validate` module.
+
+### Fixed — Token usage
+
+- **Include cache tokens in Anthropic `total_tokens`** (PR [#771](https://github.com/Oaklight/llm-rosetta/pull/771)): Anthropic's `cache_creation_input_tokens` and `cache_read_input_tokens` were not included in `total_tokens`. Also fixed stream usage merge dropping intermediate usage updates.
+
 ### Infrastructure
 
+- **Test Release workflow** (PR [#686](https://github.com/Oaklight/llm-rosetta/pull/686)): new CI workflow for publishing dev versions to Test PyPI with automated Docker dev image builds.
+- **Docker image tags** (PR [#703](https://github.com/Oaklight/llm-rosetta/pull/703)): added `latest-python`, `latest-binary`, and `dev-python` convenience tags.
+- **Vendored httpserver/httpclient CLOSE_WAIT fixes** (PR [#780](https://github.com/Oaklight/llm-rosetta/pull/780)).
+- **Update vendored zerodep modules** (PRs [#658](https://github.com/Oaklight/llm-rosetta/pull/658), [#710](https://github.com/Oaklight/llm-rosetta/pull/710), [#798](https://github.com/Oaklight/llm-rosetta/pull/798)).
 - **Zerodep-update CI workflow** (PR [#657](https://github.com/Oaklight/llm-rosetta/pull/657)): automated workflow for updating vendored zerodep modules.
-- **Update vendored zerodep modules** (PR [#658](https://github.com/Oaklight/llm-rosetta/pull/658)).
+- **Consolidate root layout** (PR [#754](https://github.com/Oaklight/llm-rosetta/pull/754)): stop tracking `keys.db` in git; clean up root directory layout.
 
 ## v0.13.0 — 2026-09-08
 
