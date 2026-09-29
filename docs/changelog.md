@@ -8,6 +8,14 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## [Unreleased]
 
+### Added — Provider shims
+
+- **AskSage provider shims** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814)): four shims for AskSage's standard-format API endpoints — `asksage--openai_chat`, `asksage--openai_responses`, `asksage--anthropic`, `asksage--google_generate`. OpenAI endpoints include a `rename_field("max_tokens", "max_completion_tokens")` transform. Gemini endpoint uses a new `connection.auth_header` field to override the default auth header (`x-access-tokens` instead of `x-goog-api-key`). Closes [#690](https://github.com/Oaklight/llm-rosetta/issues/690).
+
+### Added — Shim schema
+
+- **`connection.auth_header` field** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814)): new optional field in provider YAML schema that allows per-shim auth header overrides. When set, the gateway sends the API key under the specified header name instead of the base-type default (`Authorization: Bearer`, `x-api-key`, or `x-goog-api-key`).
+
 ### Added — Decision paradigm
 
 - **Decision model paradigm** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705)): new model category alongside chat, embedding, and rerank for probabilistic structured decisions. Decision models evaluate state against typed questions and return calibrated probability distributions — no text generation. Three IR primitives: `noul` (P(true) ∈ [0,1]), `choice` (categorical distribution), `score` (ordinal distribution). Includes `BaseDecisionConverter` ABC, `TypeSafeDecisionConverter` for the TypeSafe System One (Jev) API, provider shim, auto-detection, and gateway routes (`/v1/decision`, `/v1/systemone`).

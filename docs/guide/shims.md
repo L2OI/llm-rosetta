@@ -47,7 +47,7 @@ src/llm_rosetta/shims/providers/
 
 Each provider subdirectory contains:
 
-- **`provider.yaml`** (required) — declares `name`, `base`, `default_base_url`, `default_api_key_env`, and `logo`
+- **`provider.yaml`** (required) — declares `name`, `base`, connection settings (`connection.base_url`, `connection.api_key_env`, `connection.auth_header`), and `logo`
 - **`transforms.py`** (optional) — exports `post_ir_transforms` and/or `pre_ir_transforms` tuples (the old names `to_transforms` / `from_transforms` also work)
 
 Example `provider.yaml`:

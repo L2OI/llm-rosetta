@@ -143,6 +143,7 @@ nav:
               - OpenRouter: guide/providers/openrouter.md
               - MiniMax: guide/providers/minimax.md
               - Argo: guide/providers/argo.md
+              - AskSage: guide/providers/asksage.md
               - ALCF: guide/providers/alcf.md
           - Reasoning / Thinking: guide/reasoning.md
           - Provider Reasoning Behavior: guide/provider-reasoning.md
