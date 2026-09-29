@@ -20,6 +20,7 @@ title: 提供方参考
 | [OpenRouter](openrouter.md) | `openrouter` | `openai_chat` | 多模型路由 |
 | [MiniMax](minimax.md) | `minimax` | `openai_chat` | OpenAI 兼容 |
 | [Argo](argo.md) | `argo-*` | `openai_chat` | 阿贡内部网关 |
+| [AskSage](asksage.md) | `asksage--*` | 多种 | 多格式聚合器 |
 | [ALCF](alcf.md) | `alcf--*` | `openai_chat` | Globus OAuth, token_command |
 
 关于 shim 的通用概念和自定义 shim 注册，请参阅[提供方 Shims](../shims.md)。

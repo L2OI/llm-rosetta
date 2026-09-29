@@ -8,6 +8,14 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## [未发布]
 
+### 新增 — Provider shims
+
+- **AskSage provider shims** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814))：四个 AskSage 标准格式 API 端点的 shim——`asksage--openai_chat`、`asksage--openai_responses`、`asksage--anthropic`、`asksage--google_generate`。OpenAI 端点包含 `rename_field("max_tokens", "max_completion_tokens")` 转换。Gemini 端点使用新的 `connection.auth_header` 字段覆盖默认 auth header（`x-access-tokens` 替代 `x-goog-api-key`）。关闭 [#690](https://github.com/Oaklight/llm-rosetta/issues/690)。
+
+### 新增 — Shim schema
+
+- **`connection.auth_header` 字段** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814))：provider YAML schema 中新增可选字段，允许 per-shim auth header 覆盖。设置后，网关使用指定的 header 名称发送 API key，而非基础类型默认值（`Authorization: Bearer`、`x-api-key` 或 `x-goog-api-key`）。
+
 ### 新增 — Decision 范式
 
 - **Decision 模型范式** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705))：与 chat、embedding、rerank 并列的新模型类别，用于概率化结构决策。Decision 模型对 state 执行类型化 questions，返回校准的概率分布——不涉及文本生成。三种 IR 原语：`noul`（P(true) ∈ [0,1]）、`choice`（类别分布）、`score`（有序分布）。包含 `BaseDecisionConverter` 抽象基类、`TypeSafeDecisionConverter`（TypeSafe System One / Jev API）、provider shim、自动检测和网关路由（`/v1/decision`、`/v1/systemone`）。

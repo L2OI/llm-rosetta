@@ -47,7 +47,7 @@ src/llm_rosetta/shims/providers/
 
 每个提供方子目录包含：
 
-- **`provider.yaml`**（必需）—— 声明 `name`、`base`、`default_base_url`、`default_api_key_env` 和 `logo`
+- **`provider.yaml`**（必需）—— 声明 `name`、`base`、连接设置（`connection.base_url`、`connection.api_key_env`、`connection.auth_header`）和 `logo`
 - **`transforms.py`**（可选）—— 导出 `post_ir_transforms` 和/或 `pre_ir_transforms` 元组（旧名 `to_transforms` / `from_transforms` 也可用）
 
 `provider.yaml` 示例：
