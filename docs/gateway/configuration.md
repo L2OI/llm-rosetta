@@ -264,7 +264,7 @@ When no keys are configured, behavior depends on `open_on_no_keys` (default: `fa
 
 ### `admin_password`
 
-Optional. When set, the admin panel (`/admin/*`) requires a password login before granting access. Sessions are tracked with HMAC-based tokens, so no external session store is needed.
+Optional. When set, the admin panel (`/admin/*`) requires a password login before granting access. Sessions are tracked server-side in an in-memory session store.
 
 Supports `${ENV_VAR}` substitution:
 
@@ -313,6 +313,104 @@ To allow a specific origin:
 
 !!! note
     CORS tightening applies to `/admin/api/*` endpoints only. The `/v1/*` proxy endpoints are unaffected.
+
+## Rate Limiting
+
+The gateway supports per-client rate limiting with single or multiple sliding windows. Configure in the `server` section:
+
+```jsonc
+{
+  "server": {
+    "rate_limit": "10/m"        // Single window: 10 requests per minute
+  }
+}
+```
+
+Multi-window rate limiting uses comma-separated window specs:
+
+```jsonc
+{
+  "server": {
+    "rate_limit": "10/m, 100/h"  // 10 per minute AND 100 per hour
+  }
+}
+```
+
+| Window suffix | Meaning |
+|--------------|---------|
+| `/s` | Per second |
+| `/m` | Per minute |
+| `/h` | Per hour |
+
+Each client (identified by API key or IP) is tracked independently. When any window is exhausted, the request receives a 429 response with `Retry-After` header.
+
+Rate limit state is visible in the admin panel via `GET /admin/api/rate-limits`.
+
+## Routing Loop Detection
+
+When multiple gateway instances are chained (e.g. a campus gateway forwarding to a cloud gateway), routing loops can occur. The gateway detects these via a hop-count header:
+
+```jsonc
+{
+  "server": {
+    "max_hops": 4              // Default: 4
+  }
+}
+```
+
+Each gateway increments the `X-Rosetta-Hops` header. When the count exceeds `max_hops`, the request is rejected with a 508 (Loop Detected) response.
+
+## Soft Error Detection
+
+Some upstream providers return HTTP 200 with an error body (e.g. rate limit HTML pages, JSON error objects). The gateway can detect these via shim-configured regex patterns and re-wrap them as proper error responses:
+
+```jsonc
+// In a provider shim YAML:
+soft_error_patterns:
+  - pattern: "rate limit exceeded"
+    status: 429
+  - pattern: "internal server error"
+    status: 500
+```
+
+When a 200 response body matches a pattern, it is re-wrapped with the configured status code and proper error envelope.
+
+## Fidelity Verification
+
+The gateway can verify conversion fidelity by comparing round-trip results against stored baselines:
+
+```jsonc
+{
+  "server": {
+    "fidelity_check": true     // Default: false
+  }
+}
+```
+
+When enabled:
+
+- **Persistent baselines**: per-model round-trip conversion baselines are stored in SQLite. When a request is converted A→IR→B→IR→A, the result is compared against the stored baseline.
+- **Same-format shadow diff**: for same-format routes (e.g. OpenAI→OpenAI via different providers), a shadow diff automatically compares pre-conversion and post-round-trip request bodies.
+- Fidelity diffs are logged as error dumps for investigation in the admin panel.
+
+## Deferred Startup
+
+By default, the gateway defers blocking startup work (provider connectivity checks, model list fetches) to background tasks. The gateway starts accepting requests immediately while these tasks complete in the background. Startup progress is visible in the admin panel.
+
+## Error Dump Retention
+
+Error dumps are capped by `error_dump_cap` in the `server` section:
+
+```jsonc
+{
+  "server": {
+    "error_dump_cap": 500      // Default: 500
+  }
+}
+```
+
+!!! warning "Deprecated key"
+    The previous `error_max` key is deprecated and emits a warning at startup. Use `error_dump_cap` instead.
 
 ## Debug Options
 
@@ -415,6 +513,28 @@ The gateway can proxy `/v1/rerank` and `/v2/rerank` requests with cross-format I
 | `default_rerank_format` | `str` | `"jina"` | Source format fallback. Options: `jina`, `cohere`, `voyage` |
 
 The `/v2/rerank` endpoint auto-detects Cohere source format from the URL path.
+
+## Decision Providers
+
+The gateway can proxy `/v1/decision` and `/v1/systemone` requests for probabilistic structured decision models:
+
+```jsonc
+{
+  "decision_providers": {
+    "jev-prod": { "type": "typesafe_decision", "api_key": "${JEV_API_KEY}", "base_url": "https://api.typesafe.ai" }
+  },
+  "decision_models": {
+    "jev-1": "jev-prod"
+  },
+  "default_decision_format": "typesafe_decision"
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `decision_providers` | `dict` | `{}` | Provider configs for decision upstreams |
+| `decision_models` | `dict` | `{}` | Model → provider mapping for decision requests |
+| `default_decision_format` | `str` | `"typesafe_decision"` | Source format fallback |
 
 ## Full Example
 

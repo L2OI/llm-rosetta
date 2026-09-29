@@ -323,6 +323,25 @@ Transforms are pure `dict → dict` functions that bridge the gap between a prov
 | `strip_fields(*keys)` | Remove unsupported fields from the body | `strip_fields("logprobs", "top_logprobs")` |
 | `rename_field(old, new)` | Rename a top-level field | `rename_field("max_tokens", "max_length")` |
 | `set_defaults(**kv)` | Set fields only when absent (idempotent) | `set_defaults(temperature=0.7)` |
+| `default_tool_description(text)` | Inject a placeholder description for tools with empty descriptions | `default_tool_description("No description provided")` |
+
+### Response Body Transforms
+
+In addition to request transforms (`post_ir_transforms` / `pre_ir_transforms`), shims can declare `response_body_transforms` — pure `dict → dict` functions applied to the raw upstream response body before any IR conversion. This is useful for fixing malformed responses from non-standard endpoints.
+
+```yaml
+# provider.yaml — declare that response transforms exist
+response_body_transforms: true
+```
+
+```python
+# transforms.py
+from llm_rosetta.shims.transforms import harmony_tool_call_safeguard
+
+response_body_transforms = (harmony_tool_call_safeguard(),)
+```
+
+Built-in response transform: `harmony_tool_call_safeguard()` fixes malformed tool call JSON from Harmony/vLLM endpoints.
 
 ### How Transforms Apply
 

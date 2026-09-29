@@ -245,6 +245,30 @@ Google's REST API and CLI tools (e.g. Gemini CLI) use camelCase (`inlineData`, `
 
 For a comprehensive list of all camelCase/snake_case field pairs and other real-world compatibility issues discovered during live testing, see the [Provider & CLI Compatibility Matrix](compatibility.md).
 
+## Tool Namespace Round-Trip
+
+When converting between providers, tool names may need translation. Different providers use different naming conventions — for example, an MCP server tool `filesystem__read_file` might become `read_file` after conversion. When the response comes back with a tool call to `read_file`, it needs to be mapped back to `filesystem__read_file`.
+
+`ToolNameMap` handles this bidirectional translation automatically:
+
+- **Flattening**: nested tool names (e.g. `namespace__tool`) are collision-free flattened for providers that don't support namespaces
+- **Round-trip preservation**: the map is carried through the conversion context so response tool calls are mapped back to their original names
+- **`tool_choice` and `allowed_tools` rewriting**: these request fields are also translated to use the target provider's naming convention
+- **Conflict detection**: when flattening would create collisions (two tools mapping to the same flat name), warnings are emitted
+
+In the gateway, tool namespace mapping is applied automatically during cross-format conversion. For library usage:
+
+```python
+from llm_rosetta.tool_ops import ToolNameMap
+
+name_map = ToolNameMap()
+# Register mappings during request conversion
+name_map.register("filesystem__read_file", "read_file")
+
+# Look up the original name when processing the response
+original = name_map.reverse("read_file")  # → "filesystem__read_file"
+```
+
 ## Warnings and Error Handling
 
 Conversion methods that produce output return warnings as a `list[str]` — either as the second element of a tuple (`request_to_provider`, `messages_to_provider`) or via `ConversionContext.warnings`.

@@ -42,6 +42,16 @@ When more than 6 providers are configured, a search bar appears at the top of th
 
 Two icon buttons in the providers header let you switch between **grid** (card) and **list** (compact row) layout. The selected view is persisted in `localStorage`.
 
+### Multi-Provider Models
+
+A single model can be served by multiple providers with weighted load distribution. In the providers section, multi-provider models show all associated providers with their individual weights, types, and enabled states. You can:
+
+- **Edit weights** inline to control traffic distribution between providers
+- **Toggle individual providers** within a multi-provider model
+- **Add providers** to an existing model via the "Fetch Models" dialog
+
+When renaming a model to a name that already exists, providers are merged instead of failing.
+
 ### Model Routing
 
 Below the providers section, a model routing table lists all configured models with their target provider and capabilities. You can:
@@ -117,6 +127,15 @@ Two rolling 60-second charts show:
 
 When there is no traffic yet, charts display a "No data yet" message instead of rendering a flat line.
 
+### Token Usage
+
+Click a model's token count in the dashboard to open a breakdown modal showing:
+
+- **Prompt / Completion / Total** token counts
+- **Cache creation / Cache read** token counts (Anthropic-style providers)
+- **Reasoning tokens** (for models with extended thinking)
+- **Rolling 24-hour** statistics
+
 ### Per-Provider Breakdown
 
 A table showing request counts grouped by target provider, useful for identifying traffic distribution.
@@ -158,6 +177,27 @@ Use the dropdown filters at the top to narrow by:
 
 Click **Clear Log** to remove all entries from the current view.
 
+### Server Ops Log
+
+The Logs tab includes a segmented toggle to switch between **Request Log** and **Server Ops Log**. The ops log tracks server-level operational events:
+
+| Event type | Examples |
+|-----------|---------|
+| Startup / Shutdown | Server start, graceful stop |
+| Config | Config reload, hot-reload via admin API |
+| API Keys | Key creation, deletion, rotation |
+
+Filters for event type, severity, and source narrow the view. Auto-refresh is gated on the active log view (request log refreshes don't fire while viewing ops log, and vice versa).
+
+### Log Retention
+
+Retention is configured in the Settings section of the admin panel:
+
+- **Count-based**: maximum number of entries to keep (oldest are pruned)
+- **Age-based**: entries older than a threshold are automatically cleaned up
+
+Both thresholds apply independently — whichever triggers first wins.
+
 ## Themes
 
 The admin panel ships with 8 themes, selectable from the dropdown in the top-right corner:
@@ -190,12 +230,13 @@ See [Configuration — Admin Panel Security](configuration.md#admin-panel-securi
 When password protection is enabled:
 
 !!! info "No content flash"
-    While the browser verifies your stored session token, the admin UI remains hidden (`body.auth-pending`) until authentication is confirmed. This prevents a brief flash of the full interface before the login overlay appears.
+    While the browser verifies your stored session, the admin UI remains hidden (`body.auth-pending`) until authentication is confirmed. This prevents a brief flash of the full interface before the login overlay appears.
 
-- The login token is stored in `localStorage`, so your session survives browser restarts — not just the current tab.
+- Authentication uses **HttpOnly + SameSite=Lax** session cookies — no tokens are exposed to JavaScript.
 - A **Logout** button appears in the top-right corner to end your session manually.
 - Sessions automatically expire after **30 minutes of inactivity**. Mouse movement, keyboard input, scrolling, and clicks all count as activity.
 - The login form uses standard HTML form semantics, so browser password managers can save and autofill credentials.
+- For programmatic API access, the `X-Admin-Token` header is still accepted as a fallback.
 
 Alternatively, protect the admin panel using a reverse proxy:
 
