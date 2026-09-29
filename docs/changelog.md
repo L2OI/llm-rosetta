@@ -57,6 +57,7 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **深色主题文字可见性** — 在 accent 背景上的文字使用 `--accent-on` CSS 变量代替硬编码 `#fff`，修复 minimal 深色主题下分段控件、主按钮、芯片和登录按钮上文字不可见的问题。
 - **测试下拉菜单裁切** — 测试菜单下拉使用 `position: fixed` 配合 JS 计算定位，避免被表格 `overflow` 容器裁切。
 - **包数据 glob** — `pyproject.toml` 从 `js/*.js` 更新为 `js/**/*.js`，以包含重组后子目录中的 JS 文件。
+- **Models 页面空白** (PR [#816](https://github.com/Oaklight/llm-rosetta/pull/816)) — `_checkRoutingLoops()` 调用了 `api()` 而非 `api.get()`，导致 `TypeError` 被 `loadConfig()` 的 `try/catch` 静默吞掉。PR [#784](https://github.com/Oaklight/llm-rosetta/pull/784) 合入后所有部署的 Models 页面均显示为空。
 
 ### 网关 — 多 Provider 路由与基础设施
 
