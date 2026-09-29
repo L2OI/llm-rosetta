@@ -308,7 +308,7 @@ endif
 	@set -e; \
 	COMMIT=$$(git rev-parse --short HEAD); \
 	ORIG_VER=$$(python -c 'import re; print(re.search(r"__version__ = \"([^\"]+)\"", open("src/llm_rosetta/__init__.py").read()).group(1))'); \
-	DEV_VER="$$ORIG_VER.dev0+g$$COMMIT"; \
+	DEV_VER=$$(printf '%s' "$$ORIG_VER" | grep -q '\.dev[0-9]' && printf '%s+g%s' "$$ORIG_VER" "$$COMMIT" || printf '%s.dev0+g%s' "$$ORIG_VER" "$$COMMIT"); \
 	echo "==> Building dev wheel $$DEV_VER..."; \
 	python -c 'from pathlib import Path; p=Path("src/llm_rosetta/__init__.py"); s=p.read_text(); p.write_text(s.replace("__version__ = \"'"$$ORIG_VER"'\"", "__version__ = \"'"$$DEV_VER"'\""))'; \
 	rm -rf dist build; \
