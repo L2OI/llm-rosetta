@@ -856,6 +856,8 @@ def _validate_weight(raw: Any) -> tuple[int | None, Response | None]:
         )
     if w < 1:
         return None, JSONResponse({"error": "'weight' must be >= 1"}, status_code=400)
+    if w > 100:
+        return None, JSONResponse({"error": "'weight' must be <= 100"}, status_code=400)
     return w, None
 
 

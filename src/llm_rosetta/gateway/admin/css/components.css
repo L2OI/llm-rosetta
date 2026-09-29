@@ -72,6 +72,7 @@ tr:hover td { background: var(--bg-hover); }
 .provider-list-items { display:none;margin-top:4px; }
 .provider-list-toggle.open + .provider-list-items { display:block; }
 .provider-list-item { display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0; }
+.provider-detail-row td { border-top:none !important; }
 .provider-list-item .provider-link { font-size:12px; }
 .provider-list-item .provider-weight { font-size:10px;color:var(--text-dim);background:var(--bg);padding:1px 4px;border-radius:3px; }
 .provider-list-item .provider-upstream { font-size:10px;color:var(--text-dim); }
@@ -195,7 +196,7 @@ tr:hover td { background: var(--bg-hover); }
   mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
-.provider-grid.list-view .pc-badges { margin-bottom: 0; flex-wrap: nowrap; }
+.provider-grid.list-view .pc-badges { margin-bottom: 0; flex-wrap: nowrap; justify-content: center; }
 /* pc-meta is layout-transparent so its fields become subgrid columns */
 .provider-grid.list-view .pc-meta { display: contents; }
 .provider-grid.list-view .pc-field { margin-bottom: 0; overflow: hidden; }

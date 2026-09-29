@@ -375,23 +375,47 @@ function _renderProviderCell(name, info, disabledProviders) {
   }
   const primary = details.find(p => !disabledProviders.has(p.name)) || details[0];
   const priDis = disabledProviders.has(primary.name);
-  const items = details.map(p => {
+  return `<span class="provider-link" onclick="goToProviderFromModel('${esc(primary.name)}')">${esc(primary.name)}</span>${priDis ? ` <span style="color:var(--text-dim);font-size:11px">(${t('provider.disabled')})</span>` : ''}
+    <span class="provider-expand-toggle" onclick="toggleProviderRows(this,'${esc(name)}')" style="cursor:pointer;font-size:11px;color:var(--text-dim);margin-left:4px;user-select:none"><span class="arrow" style="font-size:8px;display:inline-block;transition:transform 0.15s">▸</span> ${details.length} providers</span>`;
+}
+
+function toggleProviderRows(el, modelName) {
+  const arrow = el.querySelector('.arrow');
+  const tr = el.closest('tr');
+  const existing = tr.parentNode.querySelectorAll(`tr.provider-detail-row[data-parent-model="${modelName}"]`);
+  if (existing.length > 0) {
+    existing.forEach(r => r.remove());
+    if (arrow) arrow.style.transform = '';
+    return;
+  }
+  if (arrow) arrow.style.transform = 'rotate(90deg)';
+  const info = S.configData?.models?.[modelName];
+  if (!info) return;
+  const disabledProviders = new Set();
+  if (S.configData?.providers) {
+    for (const [pn, pi] of Object.entries(S.configData.providers)) {
+      if (pi && pi.enabled === false) disabledProviders.add(pn);
+    }
+  }
+  const details = _getProviderDetails(info);
+  const rows = details.map(p => {
     const dis = disabledProviders.has(p.name);
     const w = p.weight || 1;
-    const weightTag = ` <input type="number" class="weight-input" min="1" value="${w}" title="Routing weight" onchange="updateProviderWeight('${esc(name)}','${esc(p.name)}',this.value)" onkeydown="if(event.key==='Enter'){this.blur()}">`;
-    const upTag = p.upstream_model ? ` <span class="provider-upstream">→ ${esc(p.upstream_model)}</span>` : '';
-    const disTag = dis ? ` <span style="color:var(--text-dim);font-size:10px">(${t('provider.disabled')})</span>` : '';
-    return `<div class="provider-list-item">
-      <span class="provider-link" onclick="goToProviderFromModel('${esc(p.name)}')">${esc(p.name)}</span>${weightTag}${upTag}${disTag}
-      <button class="remove-provider" title="Remove provider" onclick="event.stopPropagation();removeProviderFromModel('${esc(name)}','${esc(p.name)}')">✕</button>
-    </div>`;
+    return `<tr class="provider-detail-row" data-parent-model="${esc(modelName)}" style="background:var(--bg)">
+      <td></td>
+      <td colspan="5" style="padding:4px 12px 4px 20px">
+        <div style="display:grid;grid-template-columns:minmax(100px,auto) 56px 1fr auto;gap:8px;align-items:center;font-size:12px">
+          <span class="provider-link" onclick="goToProviderFromModel('${esc(p.name)}')">${esc(p.name)}${dis ? ` <span style="color:var(--text-dim);font-size:10px">(${t('provider.disabled')})</span>` : ''}</span>
+          <input type="number" class="weight-input" min="1" max="100" value="${w}" title="Routing weight" style="width:48px;padding:2px 4px;font-size:11px;text-align:center;border:1px solid var(--border);border-radius:3px;background:var(--bg-card);color:var(--text);font-family:var(--mono)" onchange="updateProviderWeight('${esc(modelName)}','${esc(p.name)}',this.value)" onkeydown="if(event.key==='Enter'){this.blur()}">
+          <span style="font-size:11px;color:var(--text-dim)">${p.upstream_model ? `→ ${esc(p.upstream_model)}` : ''}</span>
+          <button class="btn btn-sm" style="font-size:10px;padding:1px 6px;opacity:0.4" title="Remove" onclick="event.stopPropagation();removeProviderFromModel('${esc(modelName)}','${esc(p.name)}')">✕</button>
+        </div>
+      </td>
+    </tr>`;
   }).join('');
-  return `<span class="provider-link" onclick="goToProviderFromModel('${esc(primary.name)}')">${esc(primary.name)}</span>${priDis ? ` <span style="color:var(--text-dim);font-size:11px">(${t('provider.disabled')})</span>` : ''}
-    <div class="provider-list">
-      <span class="provider-list-toggle" onclick="this.classList.toggle('open')"><span class="arrow">▸</span> ${details.length} providers</span>
-      <div class="provider-list-items">${items}</div>
-    </div>`;
+  tr.insertAdjacentHTML('afterend', rows);
 }
+window.toggleProviderRows = toggleProviderRows;
 
 async function removeProviderFromModel(modelName, providerName) {
   if (!confirm(`Remove provider "${providerName}" from model "${modelName}"?`)) return;
@@ -406,7 +430,7 @@ async function removeProviderFromModel(modelName, providerName) {
 
 async function updateProviderWeight(modelName, providerName, newWeight) {
   const w = parseInt(newWeight, 10);
-  if (isNaN(w) || w < 1) { showToast('Weight must be >= 1', 'error'); window.loadConfig(); return; }
+  if (isNaN(w) || w < 1 || w > 100) { showToast('Weight must be 1–100', 'error'); window.loadConfig(); return; }
   const res = await api.post(`/admin/api/config/models/${encodeURIComponent(modelName)}/update-provider`, {provider: providerName, weight: w});
   if (res.ok) {
     showToast(`${providerName} weight → ${w}`);
