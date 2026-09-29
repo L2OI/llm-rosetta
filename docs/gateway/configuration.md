@@ -262,7 +262,7 @@ keystore（`keys.db`）中。
 
 ### `admin_password`
 
-可选。设置后，访问管理面板（`/admin/*`）前需要密码登录。会话通过 HMAC token 追踪，无需外部 session 存储。
+可选。设置后，访问管理面板（`/admin/*`）前需要密码登录。会话通过服务端内存 session store 追踪。
 
 支持 `${ENV_VAR}` 替换：
 
@@ -311,6 +311,104 @@ keystore（`keys.db`）中。
 
 !!! note
     CORS 收紧仅对 `/admin/api/*` 端点生效，`/v1/*` 代理端点不受影响。
+
+## 限流
+
+网关支持基于客户端的单窗口或多窗口滑动限流。在 `server` 段中配置：
+
+```jsonc
+{
+  "server": {
+    "rate_limit": "10/m"        // 单窗口：每分钟 10 个请求
+  }
+}
+```
+
+多窗口限流使用逗号分隔的窗口规格：
+
+```jsonc
+{
+  "server": {
+    "rate_limit": "10/m, 100/h"  // 每分钟 10 个 且 每小时 100 个
+  }
+}
+```
+
+| 窗口后缀 | 含义 |
+|---------|------|
+| `/s` | 每秒 |
+| `/m` | 每分钟 |
+| `/h` | 每小时 |
+
+每个客户端（通过 API key 或 IP 识别）独立追踪。当任一窗口耗尽时，请求收到 429 响应，带有 `Retry-After` header。
+
+限流状态可通过 admin 面板的 `GET /admin/api/rate-limits` 查看。
+
+## 路由环路检测
+
+当多个网关实例链式连接时（如校园网关转发到云端网关），可能出现路由环路。网关通过跳数 header 检测：
+
+```jsonc
+{
+  "server": {
+    "max_hops": 4              // 默认值：4
+  }
+}
+```
+
+每个网关递增 `X-Rosetta-Hops` header。当计数超过 `max_hops` 时，请求被拒绝并返回 508（Loop Detected）响应。
+
+## 软错误检测
+
+某些上游 Provider 返回 HTTP 200 但 body 包含错误内容（如限流 HTML 页面、JSON 错误对象）。网关可通过 shim 配置的正则模式检测并重新包装为正确的错误响应：
+
+```jsonc
+// 在 provider shim YAML 中：
+soft_error_patterns:
+  - pattern: "rate limit exceeded"
+    status: 429
+  - pattern: "internal server error"
+    status: 500
+```
+
+当 200 响应 body 匹配到模式时，将使用配置的状态码和正确的错误信封重新包装。
+
+## 保真度验证
+
+网关可通过与存储的基线比较往返结果来验证转换保真度：
+
+```jsonc
+{
+  "server": {
+    "fidelity_check": true     // 默认值：false
+  }
+}
+```
+
+启用后：
+
+- **持久化基线**：按模型的往返转换基线存储在 SQLite 中。当请求经过 A→IR→B→IR→A 转换后，与存储的基线进行比较。
+- **同格式影子对比**：对同格式路由（如 OpenAI→OpenAI 经不同 Provider），自动比较转换前和往返后的请求体。
+- 保真度差异记录为错误转储，可在 admin 面板中调查。
+
+## 延迟启动
+
+默认情况下，网关将阻塞性启动工作（Provider 连通性检查、模型列表拉取）推迟到后台任务。网关立即开始接受请求，同时这些任务在后台完成。启动进度在 admin 面板中可见。
+
+## 错误转储保留
+
+错误转储通过 `server` 段中的 `error_dump_cap` 限制上限：
+
+```jsonc
+{
+  "server": {
+    "error_dump_cap": 500      // 默认值：500
+  }
+}
+```
+
+!!! warning "已废弃的 key"
+    之前的 `error_max` key 已废弃，启动时会发出警告。请使用 `error_dump_cap` 替代。
 
 ## 调试选项
 
@@ -413,6 +511,28 @@ keystore（`keys.db`）中。
 | `default_rerank_format` | `str` | `"jina"` | 源格式兜底。选项：`jina`、`cohere`、`voyage` |
 
 `/v2/rerank` 端点会根据 URL 路径自动检测 Cohere 源格式。
+
+## Decision 提供方
+
+网关可代理 `/v1/decision` 和 `/v1/systemone` 请求，用于概率化结构决策模型：
+
+```jsonc
+{
+  "decision_providers": {
+    "jev-prod": { "type": "typesafe_decision", "api_key": "${JEV_API_KEY}", "base_url": "https://api.typesafe.ai" }
+  },
+  "decision_models": {
+    "jev-1": "jev-prod"
+  },
+  "default_decision_format": "typesafe_decision"
+}
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `decision_providers` | `dict` | `{}` | Decision 上游的 provider 配置 |
+| `decision_models` | `dict` | `{}` | 模型 → provider 映射 |
+| `default_decision_format` | `str` | `"typesafe_decision"` | 源格式回退 |
 
 ## 完整示例
 

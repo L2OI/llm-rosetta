@@ -244,6 +244,30 @@ Google 的 REST API 和 CLI 工具（如 Gemini CLI）使用 camelCase（`inline
 
 有关所有 camelCase/snake_case 字段对及其他在实际测试中发现的真实兼容性问题的完整列表，请参阅[提供方与 CLI 兼容性矩阵](compatibility.md)。
 
+## 工具命名空间往返
+
+在 Provider 之间转换时，工具名可能需要翻译。不同 Provider 使用不同的命名约定——例如，MCP server 工具 `filesystem__read_file` 在转换后可能变成 `read_file`。当响应中包含对 `read_file` 的工具调用时，需要将其映射回 `filesystem__read_file`。
+
+`ToolNameMap` 自动处理这种双向翻译：
+
+- **扁平化**：嵌套工具名（如 `namespace__tool`）对不支持命名空间的 Provider 进行无冲突扁平化
+- **往返保持**：映射通过转换上下文传递，使响应中的工具调用能映射回原始名称
+- **`tool_choice` 和 `allowed_tools` 重写**：这些请求字段也会被翻译为目标 Provider 的命名约定
+- **冲突检测**：当扁平化会产生冲突（两个工具映射到相同的扁平名）时，发出警告
+
+在网关中，工具命名空间映射在跨格式转换时自动应用。库层使用方式：
+
+```python
+from llm_rosetta.tool_ops import ToolNameMap
+
+name_map = ToolNameMap()
+# 在请求转换期间注册映射
+name_map.register("filesystem__read_file", "read_file")
+
+# 处理响应时查找原始名称
+original = name_map.reverse("read_file")  # → "filesystem__read_file"
+```
+
 ## 警告与错误处理
 
 产出结果的转换方法会返回警告（`list[str]`）——有的作为返回元组的第二个元素（`request_to_provider`、`messages_to_provider`），有的通过 `ConversionContext.warnings` 获取。

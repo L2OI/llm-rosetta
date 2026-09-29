@@ -322,6 +322,25 @@ multimodal_tool_result: false
 | `strip_fields(*keys)` | 从请求体中移除不支持的字段 | `strip_fields("logprobs", "top_logprobs")` |
 | `rename_field(old, new)` | 重命名顶层字段 | `rename_field("max_tokens", "max_length")` |
 | `set_defaults(**kv)` | 仅在字段不存在时设置（幂等） | `set_defaults(temperature=0.7)` |
+| `default_tool_description(text)` | 为描述为空的工具注入占位描述 | `default_tool_description("No description provided")` |
+
+### 响应体变换
+
+除了请求变换（`post_ir_transforms` / `pre_ir_transforms`），shim 还可以声明 `response_body_transforms`——在 IR 转换之前应用于原始上游响应体的纯 `dict → dict` 函数。用于修复非标准端点返回的畸形响应。
+
+```yaml
+# provider.yaml — 声明响应变换存在
+response_body_transforms: true
+```
+
+```python
+# transforms.py
+from llm_rosetta.shims.transforms import harmony_tool_call_safeguard
+
+response_body_transforms = (harmony_tool_call_safeguard(),)
+```
+
+内置响应变换：`harmony_tool_call_safeguard()` 修复 Harmony/vLLM 端点返回的畸形工具调用 JSON。
 
 ### 应用方式
 
