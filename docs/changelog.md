@@ -8,200 +8,44 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## [未发布]
 
-### 新增 — Provider shims
+### 新增
 
-- **AskSage provider shims** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814))：四个 AskSage 标准格式 API 端点的 shim——`asksage--openai_chat`、`asksage--openai_responses`、`asksage--anthropic`、`asksage--google_generate`。OpenAI 端点包含 `rename_field("max_tokens", "max_completion_tokens")` 转换。Gemini 端点使用新的 `connection.auth_header` 字段覆盖默认 auth header（`x-access-tokens` 替代 `x-goog-api-key`）。关闭 [#690](https://github.com/Oaklight/llm-rosetta/issues/690)。
+- **Decision 模型范式** (PRs [#705](https://github.com/Oaklight/llm-rosetta/pull/705), [#709](https://github.com/Oaklight/llm-rosetta/pull/709), [#711](https://github.com/Oaklight/llm-rosetta/pull/711), [#718](https://github.com/Oaklight/llm-rosetta/pull/718))：用于概率化结构决策的新模型类别。三种 IR 问题类型（`noul`、`choice`、`score`），支持 LLM structured output、reranker 相关性评分和 embedding 余弦相似度三种 converter 后端。网关路由 `/v1/decision` 和 `/v1/systemone`。
+- **多 Provider 路由** (PRs [#664](https://github.com/Oaklight/llm-rosetta/pull/664), [#663](https://github.com/Oaklight/llm-rosetta/pull/663), [#662](https://github.com/Oaklight/llm-rosetta/pull/662))：每个模型可配置多个上游 Provider，支持加权轮询、API key 亲和性优化 prompt cache 命中率、按请求 token 用量追踪。
+- **ALCF Provider 支持** (PRs [#673](https://github.com/Oaklight/llm-rosetta/pull/673), [#675](https://github.com/Oaklight/llm-rosetta/pull/675), [#679](https://github.com/Oaklight/llm-rosetta/pull/679), [#689](https://github.com/Oaklight/llm-rosetta/pull/689), [#680](https://github.com/Oaklight/llm-rosetta/pull/680), [#681](https://github.com/Oaklight/llm-rosetta/pull/681))：ALCF 推理集群的 provider shim，包含 Globus OAuth2 token 管理、401 自动刷新和 30 天 session 策略检测。`token_command` 配置字段支持任何有过期 token 的 Provider 动态刷新 API key。
+- **AskSage provider shims** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814))：AskSage OpenAI、Anthropic 和 Gemini 端点的 shim。新增 `connection.auth_header` 字段支持 per-shim auth header 覆盖。
+- **模型类型注册表** (PRs [#730](https://github.com/Oaklight/llm-rosetta/pull/730), [#735](https://github.com/Oaklight/llm-rosetta/pull/735), [#736](https://github.com/Oaklight/llm-rosetta/pull/736), [#737](https://github.com/Oaklight/llm-rosetta/pull/737))：声明式模型类型注册表（LLM、embedding、rerank、decision）。添加新类型只需一个描述符——admin UI 徽章、provider 弹窗、测试菜单和路由全部从注册表元数据驱动。
+- **Provider 熔断器** (PR [#727](https://github.com/Oaklight/llm-rosetta/pull/727))：三态熔断器，对持续高错误率的 Provider 短路请求。可按 Provider 配置，默认禁用。
+- **Admin 面板改进**：hash 路由标签页导航，支持浏览器前进/后退；独立 Settings 标签页；服务运维日志，支持事件过滤和保留策略；httponly cookie session 认证；日志/错误转储批量清理；token 用量明细弹窗；多窗口速率限制；多 Provider 模型编辑与内联权重控制。
+- **路由智能** (PRs [#784](https://github.com/Oaklight/llm-rosetta/pull/784), [#785](https://github.com/Oaklight/llm-rosetta/pull/785), [#770](https://github.com/Oaklight/llm-rosetta/pull/770), [#676](https://github.com/Oaklight/llm-rosetta/pull/676))：hop-count header 路由环检测、同格式 provider 亲和性避免不必要转换、cache 感知亲和性路由、rendezvous hashing key 亲和性。
+- **保真度验证** (PRs [#772](https://github.com/Oaklight/llm-rosetta/pull/772), [#796](https://github.com/Oaklight/llm-rosetta/pull/796))：持久化往返转换基线与回归检测。同格式路由 always-on shadow diff。
+- **双向工具命名空间映射** (PR [#753](https://github.com/Oaklight/llm-rosetta/pull/753))：Provider 间工具名无冲突翻译，支持往返保持。
+- **可观测性** (PRs [#702](https://github.com/Oaklight/llm-rosetta/pull/702), [#755](https://github.com/Oaklight/llm-rosetta/pull/755), [#756](https://github.com/Oaklight/llm-rosetta/pull/756))：cache 和 reasoning token 追踪、TTFB 指标、客户端断连检测、vendored tracing profiler 替代 pyinstrument。
 
-### 新增 — Shim schema
+### 变更（**破坏性变更**）
 
-- **`connection.auth_header` 字段** (PR [#814](https://github.com/Oaklight/llm-rosetta/pull/814))：provider YAML schema 中新增可选字段，允许 per-shim auth header 覆盖。设置后，网关使用指定的 header 名称发送 API key，而非基础类型默认值（`Authorization: Bearer`、`x-api-key` 或 `x-goog-api-key`）。
+- **Gateway 模块重组** (PRs [#739](https://github.com/Oaklight/llm-rosetta/pull/739), [#738](https://github.com/Oaklight/llm-rosetta/pull/738), [#744](https://github.com/Oaklight/llm-rosetta/pull/744))：后端文件移入 `gateway/middleware/` 和 `gateway/pipelines/` 子包；admin JS 移入 `js/core/`、`js/tabs/`、`js/components/`。**旧的扁平 import 路径（`gateway.auth`、`gateway.embeddings` 等）不再有效**——请使用 `gateway.middleware.*` / `gateway.pipelines.*`。参见 `argo-proxy` [#179](https://github.com/Oaklight/argo-proxy/pull/179) 的迁移。
 
-### 新增 — Decision 范式
+### 变更
 
-- **Decision 模型范式** (PR [#705](https://github.com/Oaklight/llm-rosetta/pull/705))：与 chat、embedding、rerank 并列的新模型类别，用于概率化结构决策。Decision 模型对 state 执行类型化 questions，返回校准的概率分布——不涉及文本生成。三种 IR 原语：`noul`（P(true) ∈ [0,1]）、`choice`（类别分布）、`score`（有序分布）。包含 `BaseDecisionConverter` 抽象基类、`TypeSafeDecisionConverter`（TypeSafe System One / Jev API）、provider shim、自动检测和网关路由（`/v1/decision`、`/v1/systemone`）。
-- **LLM 驱动的 decision converter** (PR [#709](https://github.com/Oaklight/llm-rosetta/pull/709))：通过 chat structured output 回答 decision questions——任何 LLM 都可作为 decision 后端，将问题重新表述为 JSON schema 约束的 chat 补全。
-- **Reranker 与 embedding 驱动的 decision converter** (PR [#711](https://github.com/Oaklight/llm-rosetta/pull/711))：`choice` 问题通过 reranker 相关性评分回答；`noul` 问题通过 embedding 余弦相似度回答。支持非 LLM 模型作为 decision 后端。
-- **基于注册表的网关集成** (PR [#718](https://github.com/Oaklight/llm-rosetta/pull/718))：decision 范式通过模型类型注册表接入，自动注册路由、遥测和 admin UI 支持。
-
-### 网关 — 中间件统一与模型类型注册表
-
-- **统一错误响应格式化** (PR [#726](https://github.com/Oaklight/llm-rosetta/pull/726))：将 `proxy.py`、`auth.py`、`ratelimit.py` 三处独立的错误信封实现合并为 `error_format.py` 单一模块。路径 → API 格式 → 错误信封（OpenAI/Anthropic/Google）使用统一映射表。CORS 头逻辑合并。
-- **请求上下文中间件** (PR [#728](https://github.com/Oaklight/llm-rosetta/pull/728))：`RequestContext` 不可变数据类，在最早的 `before_request` hook 中一次填充。替代 auth、ratelimit、proxy 层中重复的路由检测、客户端 IP 提取和管理路径判断。
-- **Provider 熔断器** (PR [#727](https://github.com/Oaklight/llm-rosetta/pull/727))：三态熔断器（CLOSED → OPEN → HALF_OPEN → CLOSED），对持续高错误率的 Provider 短路请求。可按 Provider 配置阈值，默认禁用。Admin API 端点可查看熔断状态。
-- **Admin API 处理函数工具** (PR [#725](https://github.com/Oaklight/llm-rosetta/pull/725))：从 12 个相同的配置变更周期中提取 `parse_json_body()` 和 `config_mutate()` 上下文管理器，`config.py` 减少约 200 行。
-- **模型类型注册表** (PR [#730](https://github.com/Oaklight/llm-rosetta/pull/730))：声明式 `ModelTypeDescriptor` 注册表，添加新模型类型只需一个描述符 + 管道函数。LLM、embedding、rerank、decision 均为注册类型。非 LLM 处理函数自动获得遥测、性能分析和错误转储。模型列表支持 `?type=` 过滤。Admin UI 的分段控件、徽章和测试菜单从注册表元数据驱动。
-
-### Admin — 数据驱动 UI 可扩展性
-
-- **后端元数据增强** (PR [#735](https://github.com/Oaklight/llm-rosetta/pull/735))：`ModelTypeDescriptor` 新增 `icon_svg`、`color`、`is_llm` 字段；`config_format_key`、`config_path_key`、`default_path` 序列化到 `/admin/api/config` 元数据。
-- **数据驱动 Provider 弹窗** (PR [#736](https://github.com/Oaklight/llm-rosetta/pull/736))：能力复选框、端点配置区、分段控件、徽章渲染和保存逻辑全部由后端 `model_types` 元数据驱动。动态 CSS 注入徽章/圆点颜色。添加新模型类型无需修改 HTML/CSS/JS。
-- **测试类型注册表与 i18n 回退** (PR [#737](https://github.com/Oaklight/llm-rosetta/pull/737))：JS 端 `registerTestType()` API 支持可扩展的测试载荷和结果渲染器。动态获取模型类型单选按钮。`t()` 函数对未知 i18n key 自动首字母大写作为回退。
-- **Provider 列表视图紧凑徽章** — 仅显示 SVG 图标（无文字），hover 显示类型名。
-- **按启用状态排序模型** — Actions 列头可按有效启用状态排序（模型启用且 Provider 启用）。
-- **有效开关状态** — 当 Provider 被禁用时，其下模型的开关渲染为关闭状态，tooltip 说明原因。
-
-### 变更 — 代码组织（**破坏性变更**）
-
-- **Gateway 后端重组** (PR [#739](https://github.com/Oaklight/llm-rosetta/pull/739))：将 13 个文件移入 `gateway/middleware/`（8 个文件）和 `gateway/pipelines/`（5 个文件）子包。
-- **Admin JS 重组** (PR [#738](https://github.com/Oaklight/llm-rosetta/pull/738))：将 14 个 JS 文件移入 `js/core/`、`js/tabs/`、`js/components/` 子目录。
-- **移除向后兼容 shim** (PR [#744](https://github.com/Oaklight/llm-rosetta/pull/744))：**破坏性变更** — 旧的扁平 import 路径（`gateway.auth`、`gateway.embeddings` 等）不再有效。所有 import 必须使用规范路径 `gateway.middleware.*` / `gateway.pipelines.*`。下游项目需更新 import（参见 `argo-proxy` [#179](https://github.com/Oaklight/argo-proxy/pull/179)）。
-
-### 修复 — Shims
-
-- **Provider shim 审计** (PR [#758](https://github.com/Oaklight/llm-rosetta/pull/758))：对所有 provider shim 配置进行系统审计，对照最新 API 文档（2026-09-24），并通过真实 API 调用验证。主要修复：
-    - **Anthropic**：新增 Claude Sonnet 5、Opus 5、Opus 5.5 的 model override——这些模型拒绝 `thinking.type: "enabled"`，需要使用 `adaptive`。Opus 5.5 还拒绝 `disabled`（思考始终开启）。
-    - **OpenAI**（Chat + Responses）：`effort_range` 从 `[minimal, high]` 扩展至 `[minimal, max]`——gpt-6-sol 支持 `max` effort。
-    - **xAI**：保持 `effort_range` 为 `[minimal, xhigh]`——实测确认 Grok 现已接受 `minimal`。
-    - **Volcengine**：`api_key_env` 从 `VOLCENGINE_API_KEY` 修正为 `ARK_API_KEY`，`effort_range` 扩展至 `[minimal, max]`，为 Responses shim 新增 `thinking_modes`。
-    - **MiniMax**：修正 `thinking_modes` 映射 `enabled` → `adaptive`，移除不支持的 `effort_field`/`effort_range`。
-    - **Moonshot**：新增 reasoning 配置（`thinking.type` + `reasoning_effort`）。
-    - **OpenRouter**：`effort_range` 下限从 `[low, xhigh]` 修正为 `[minimal, xhigh]`。
-    - **Zhipu**：新增 `thinking_modes` 配置（`enabled`/`disabled`）。
-    - **DeepSeek**：将已废弃的 `frequency_penalty`、`presence_penalty` 加入 strip 列表。
-    - 为国内厂商（MiniMax、Moonshot、Zhipu、Volcengine、Qwen）添加国内/国际端点注释。
+- **Shim 变换** (PRs [#684](https://github.com/Oaklight/llm-rosetta/pull/684), [#685](https://github.com/Oaklight/llm-rosetta/pull/685), [#716](https://github.com/Oaklight/llm-rosetta/pull/716), [#799](https://github.com/Oaklight/llm-rosetta/pull/799), [#812](https://github.com/Oaklight/llm-rosetta/pull/812))：新增 `default_tool_description` 和 `response_body_transforms` 原语；Argo 和 DeepSeek Responses API shim；`ProviderShim` 字段重组为 `ConnectionConfig`/`ToolsConfig`。
+- **构建系统** (PR [#824](https://github.com/Oaklight/llm-rosetta/pull/824))：从 `deploy-dev` 提取独立的 `build-wheel` Makefile 目标。Makefile 和 CI 的版本解析统一为 `sed -n`，兼容 POSIX/macOS。
 
 ### 修复
 
-- **深色主题文字可见性** — 在 accent 背景上的文字使用 `--accent-on` CSS 变量代替硬编码 `#fff`，修复 minimal 深色主题下分段控件、主按钮、芯片和登录按钮上文字不可见的问题。
-- **测试下拉菜单裁切** — 测试菜单下拉使用 `position: fixed` 配合 JS 计算定位，避免被表格 `overflow` 容器裁切。
-- **包数据 glob** — `pyproject.toml` 从 `js/*.js` 更新为 `js/**/*.js`，以包含重组后子目录中的 JS 文件。
-- **Models 页面空白** (PR [#816](https://github.com/Oaklight/llm-rosetta/pull/816)) — `_checkRoutingLoops()` 调用了 `api()` 而非 `api.get()`，导致 `TypeError` 被 `loadConfig()` 的 `try/catch` 静默吞掉。PR [#784](https://github.com/Oaklight/llm-rosetta/pull/784) 合入后所有部署的 Models 页面均显示为空。
-
-### 网关 — 多 Provider 路由与基础设施
-
-- **多 Provider 路由与加权轮询** (PR [#664](https://github.com/Oaklight/llm-rosetta/pull/664))：支持为每个模型配置多个上游 Provider 并按权重分配负载。新增 `RoutingStrategy` 协议和 nginx 风格的平滑 WRR 实现。Provider 特定的错误响应自动按转换器类型映射。支持按 Provider 统计 token 用量和亲和性路由。
-- **API Key 亲和性优化 prompt cache 命中** (PR [#663](https://github.com/Oaklight/llm-rosetta/pull/663))：基于 `hash(client_token + message_prefix)` 确定性选择上游 API key，使同一会话始终命中同一上游 key，最大化 Provider 端 prompt cache 命中率。
-- **Token 用量追踪** (PR [#662](https://github.com/Oaklight/llm-rosetta/pull/662))：从 IR response 中提取 prompt/completion/total token 计数，按请求持久化到 SQLite 和内存指标。流式和非流式请求均支持。
-- **`/v1/models` 中展示多 Provider 路由信息**：在 models 端点响应中暴露每个模型的 Provider 列表、权重和类型信息。
-- **Admin UI 中的 Provider 健康指示器**：Provider 卡片左边框颜色编码（绿/红/灰），每 30 秒自动刷新，单次遍历健康检查优化。
-- **未认证 health 端点不再暴露 Provider 详情** (PR [#665](https://github.com/Oaklight/llm-rosetta/pull/665))：`/health` 不再泄露上游基础设施信息；`/health/ready` 503 响应仅报告数量，不暴露 Provider 名称。
-
-### Admin — 可观测性与运维日志
-
-- **Server 运维日志后端** (PR [#670](https://github.com/Oaklight/llm-rosetta/pull/670))：`OpsLog` facade 用于追踪服务器运维事件（启动、关闭、配置重载、API key 增删改查/轮换）。SQLite 存储，基于数量的保留策略，提供 REST API。
-- **Server 运维日志前端** (PR [#671](https://github.com/Oaklight/llm-rosetta/pull/671))：Logs 标签页中新增"Request Log"/"Server Ops Log"分段切换控件，支持按事件类型、严重性和来源过滤。包含双阈值保留配置（基于数量和基于时间的清理）、i18n 事件标签、以及按当前视图智能切换自动刷新。
-
-### Admin — 安全性与用户体验
-
-- **Session 认证迁移到 httponly cookie** (PR [#660](https://github.com/Oaklight/llm-rosetta/pull/660))：Admin 面板认证从 `localStorage` + `X-Admin-Token` header 迁移到 `HttpOnly` + `SameSite=Lax` session cookie。`X-Admin-Token` header 仍作为 API 客户端的回退方式。
-- **修复 error dump 单条删除端点缺失** (PR [#656](https://github.com/Oaklight/llm-rosetta/pull/656))：批量删除单条 error dump 条目时静默失败；新增后端路由和持久化方法。
-- **暗色模式与徽章改进**：暗色模式下反转 Provider logo，embedding 和 LLM 徽章使用不同颜色区分，工具徽章样式优化。
-
-### 网关 — ALCF Token 管理
-
-- **通过 `token_command` 动态刷新 API key** (PR [#673](https://github.com/Oaklight/llm-rosetta/pull/673))：新增 `token_command` provider 配置字段，通过外部命令获取 API key。后台 asyncio 任务定期重新执行命令并原子性地替换 KeyRing 中的 key。适用于 Token 会过期的 Provider（ALCF/Globus、GCP Vertex、Azure AD 等）。
-- **ALCF provider shim 与认证脚本** (PR [#675](https://github.com/Oaklight/llm-rosetta/pull/675))：为 ALCF 推理集群（sophia、metis、minerva）添加三组 provider shim，附带零依赖的 Globus OAuth2 Token 管理脚本，支持无头登录、自动刷新和多用户。
-- **`models_path` 支持绝对 URL** (PR [#679](https://github.com/Oaklight/llm-rosetta/pull/679))：支持在 `models_path` 中使用完整 URL，用于模型列表端点在不同主机上的 Provider（如 ALCF）。
-- **ALCF reasoning、工具支持与 IR 变换** (PR [#689](https://github.com/Oaklight/llm-rosetta/pull/689))：为 ALCF shim 添加按模型的 reasoning 配置、工具支持标志和 IR 请求/响应变换。
-- **401 响应式 Token 刷新与重试** (PR [#680](https://github.com/Oaklight/llm-rosetta/pull/680))：当上游 Provider 返回 401 时，网关现在会立即通过 `token_command` 刷新 Token 并重试请求一次，而不是等待长达 1 小时的下次定期刷新周期。通过 per-provider 异步锁和 5 秒去抖防止并发 401 导致的刷新风暴。
-- **ALCF 30 天 Globus session policy 检测** (PR [#680](https://github.com/Oaklight/llm-rosetta/pull/680))：检测 ALCF 30 天强制重新认证的 401 响应（body 包含 "internal policies" / "high-assurance"），返回明确的错误提示引导用户重新认证，而非使用相同 Token 进行无意义的重试。
-- **加固 ALCF Token 刷新处理** (PR [#681](https://github.com/Oaklight/llm-rosetta/pull/681))：当 OAuth 服务器在刷新响应中省略 refresh_token 时保留现有 refresh_token（遵循 RFC 6749 §6），防御空值/null refresh_token，提取 `_show_status_dir` 辅助函数并增加目录验证。由 [@rajeeja](https://github.com/rajeeja) 贡献。
-
-### Shims — 新增变换与 Provider 支持
-
-- **`default_tool_description` 变换** (PR [#684](https://github.com/Oaklight/llm-rosetta/pull/684))：shim 级别变换，为描述为空的工具注入占位描述，解决 vLLM 端点拒绝空 `description` 字段的问题。
-- **`response_body_transforms`** (PR [#685](https://github.com/Oaklight/llm-rosetta/pull/685))：新增 shim 字段，用于响应后变换。附带 `harmony_tool_call_safeguard`，修复 Harmony/vLLM 端点返回的畸形工具调用 JSON。
-- **Argo 与 DeepSeek `openai_responses` shim** (PR [#799](https://github.com/Oaklight/llm-rosetta/pull/799))：为 Argo（基于实时探测数据的按模型请求变换）和 DeepSeek（`reasoning_content` → `reasoning.content` 重命名）添加 Responses API shim。
-- **ProviderShim 字段分组** (PR [#716](https://github.com/Oaklight/llm-rosetta/pull/716))：将 `ProviderShim` 字段重构为 `ConnectionConfig` 和 `ToolsConfig` 分组数据类，组织更清晰。
-- **ARGO 变换更新** (PR [#812](https://github.com/Oaklight/llm-rosetta/pull/812))：基于按模型探测结果更新 ARGO 请求变换，添加模型特定的字段剥离和默认值。
-
-### Shims — Bug 修复与测试
-
-- **修复 `max_tool_description_length` 未从 provider YAML 加载** (PR [#667](https://github.com/Oaklight/llm-rosetta/pull/667))：YAML loader 静默丢弃了声明的阈值，导致 shim 级别默认值的 tool description relocation 从未生效。由 [@caidao22](https://github.com/caidao22) 贡献。
-- **YAML loader 字段覆盖度 guard test** (PR [#674](https://github.com/Oaklight/llm-rosetta/pull/674))：基于 AST 的 CI 测试，验证每个 `ProviderShim` dataclass 字段都出现在 loader 构造调用中，防止静默遗漏。同时修复了 `hoist_system_messages` 未从 YAML 加载的问题。
-
-### 网关 — 路由与弹性
-
-- **上游软错误检测** (PR [#708](https://github.com/Oaklight/llm-rosetta/pull/708))：检测上游 200-but-error 响应（如限流 HTML 页面、HTTP 200 的 JSON 错误体），通过 shim 配置的正则模式匹配。匹配的响应被重新包装为正确状态码的错误响应。
-- **延迟启动** (PR [#693](https://github.com/Oaklight/llm-rosetta/pull/693))：阻塞性启动工作（连通性检查、模型拉取）移至后台任务，网关立即开始接受请求。启动状态在 admin UI 中可见。
-- **路由环路检测** (PR [#784](https://github.com/Oaklight/llm-rosetta/pull/784))：跳数中间件，检测并打破多个网关实例链式连接时的路由环路。添加 `X-Rosetta-Hops` header，超过可配置最大跳数时拒绝请求。
-- **同格式 Provider 亲和性** (PR [#785](https://github.com/Oaklight/llm-rosetta/pull/785))：当一个模型可从多个 Provider 获取时，优先选择原生格式与客户端请求格式匹配的 Provider，避免不必要的转换开销。
-- **Provider 权重 UI 与缓存感知亲和性** (PR [#770](https://github.com/Oaklight/llm-rosetta/pull/770))：admin UI 支持编辑多 Provider 模型中的 per-provider 权重。缓存感知亲和性路由在选择上游时考虑 Provider 端 prompt cache 命中概率。
-- **Rendezvous 哈希 key 亲和性** (PR [#676](https://github.com/Oaklight/llm-rosetta/pull/676))：用 rendezvous 哈希替代取模 key 选择，添加/移除 key 时仅影响 ~1/n 的现有亲和映射，在 `token_command` 刷新时保持 prompt cache 局部性。
-
-### 网关 — 保真度验证
-
-- **持久化保真度基线** (PR [#772](https://github.com/Oaklight/llm-rosetta/pull/772))：将按模型的往返转换基线存储到 SQLite 中用于回归检测。当请求经过 A→IR→B→IR→A 转换后，与存储的基线进行比较以检测保真度偏移。
-- **始终开启的保真度影子对比** (PR [#796](https://github.com/Oaklight/llm-rosetta/pull/796))：对同格式路由（如 OpenAI→OpenAI 经不同 Provider），自动运行影子对比，比较转换前和往返后的请求体。差异记录为错误转储供调查。
-
-### 网关 — 性能与稳定性
-
-- **通过 aiosqlite 异步持久化** (PR [#778](https://github.com/Oaklight/llm-rosetta/pull/778))：将所有同步 SQLite 写入转换为通过 aiosqlite 异步执行，防止请求路径上的事件循环阻塞（Issue [#775](https://github.com/Oaklight/llm-rosetta/issues/775)）。
-- **O(n²) → O(1) 清理查询** (PR [#782](https://github.com/Oaklight/llm-rosetta/pull/782))：将 O(n²) 的 `DELETE WHERE rowid NOT IN (SELECT ... ORDER BY ... LIMIT ...)` 保留策略查询替换为基于 rowid 的批量删除，修复大型数据库上的 CPU 飙升（Issue [#781](https://github.com/Oaklight/llm-rosetta/issues/781)）。
-- **O(1) 元数据存储淘汰** (PR [#783](https://github.com/Oaklight/llm-rosetta/pull/783))：将内存元数据存储中的 O(n) 线性扫描淘汰替换为使用有序字典的 O(1) 操作。
-- **fd 耗尽防护** (PR [#774](https://github.com/Oaklight/llm-rosetta/pull/774))：Docker Compose 现在设置 `ulimits` 以防止网关容器中的文件描述符耗尽（Issue [#773](https://github.com/Oaklight/llm-rosetta/issues/773)）。
-- **关闭连通性检查中的 AsyncClient** (PR [#777](https://github.com/Oaklight/llm-rosetta/pull/777))：修复 Provider 连通性检查中未关闭 `httpx.AsyncClient` 导致的 CLOSE_WAIT socket 泄漏。
-
-### 网关 — 可观测性
-
-- **缓存与推理 token 追踪** (PR [#702](https://github.com/Oaklight/llm-rosetta/pull/702))：在整个栈中追踪 `cache_creation_input_tokens`、`cache_read_input_tokens` 和 `reasoning_tokens`——IR 提取、请求日志、指标计数器和 admin UI token 分解。
-- **TTFB 指标与客户端断连追踪** (PR [#755](https://github.com/Oaklight/llm-rosetta/pull/755))：通过 httpserver 生命周期钩子追踪首字节时间延迟。检测并记录流式传输期间的客户端断连。
-- **TracingProfiler** (PR [#756](https://github.com/Oaklight/llm-rosetta/pull/756))：用 vendored zerodep tracing profiler 替代 pyinstrument。可通过 admin UI 切换。
-- **性能分析并发保护** (PR [#779](https://github.com/Oaklight/llm-rosetta/pull/779))：防止并发性能分析会话互相破坏；修复 `capture_state` 接线。
-
-### 转换器 — 工具命名空间往返
-
-- **双向工具命名空间映射** (PR [#753](https://github.com/Oaklight/llm-rosetta/pull/753))：`ToolNameMap` 在 Provider 命名约定之间翻译工具名（如 OpenAI 的 `function_name` vs Anthropic 的 `module__function_name`）。支持无冲突扁平化、往返保持、`tool_choice` 和 `allowed_tools` 重写，并在不可解析冲突时发出警告。
-
-### 转换器 — OpenAI Responses 修复
-
-- **保留字符串工具输出** (PR [#765](https://github.com/Oaklight/llm-rosetta/pull/765))：停止 JSON 强制转换字符串工具调用输出——当输出是有效字符串而非 JSON 对象时，直接透传。
-- **保留与同轮文本和工具并存的 reasoning** (PR [#766](https://github.com/Oaklight/llm-rosetta/pull/766))：当同一 assistant 轮次同时包含文本或工具调用时，reasoning 内容不再被丢弃。现在作为独立的 IR part 保留。
-- **提取 DeepSeek reasoning text** (PR [#788](https://github.com/Oaklight/llm-rosetta/pull/788))：处理 DeepSeek 的 `reasoning_content` 字段嵌套在 content 数组中的情况，将其提取到 IR reasoning parts。
-- **保留响应级字段和工具定义保真度** (PR [#792](https://github.com/Oaklight/llm-rosetta/pull/792))：响应级字段（`temperature`、`top_p`、`metadata` 等）和工具定义属性（`strict`、`output_schema`）现在通过 IR 往返时不再丢失。
-- **携带 `.done` 事件的 function_call 参数** (PR [#800](https://github.com/Oaklight/llm-rosetta/pull/800))：当流式 function_call 的参数仅出现在 `.done` 事件中（无前序 delta）时，参数现在被正确捕获到 IR。
-- **为 `custom_tool_call_input.done` 发射残余 delta** (PR [#810](https://github.com/Oaklight/llm-rosetta/pull/810))：与 #800 相同的模式应用于 `custom_tool_call_input.done` 事件——仅出现在 `.done` 帧中的参数现在作为最终 delta 发射（Issue [#803](https://github.com/Oaklight/llm-rosetta/issues/803)）。
-- **通过 extensions 转发仅请求字段** (PR [#800](https://github.com/Oaklight/llm-rosetta/pull/800), [#792](https://github.com/Oaklight/llm-rosetta/pull/792))：`frequency_penalty`、`presence_penalty`、`store`、`previous_response_id` 等请求字段通过 IR extensions 转发，供下游转换器消费。
-
-### 转换器 — 其他修复
-
-- **容忍 null stream delta** (PR [#776](https://github.com/Oaklight/llm-rosetta/pull/776))：OpenAI Chat stream chunks 中的 `delta: null`（而非 `delta: {}`）不再导致转换器崩溃。
-- **从 adaptive thinking 中剥离 `budget_tokens`** (PR [#805](https://github.com/Oaklight/llm-rosetta/pull/805))：Anthropic 在 `thinking.type` 为 `adaptive` 时拒绝 `budget_tokens`；该字段现在为使用 adaptive thinking 模式的模型自动剥离。
-- **保留多分支 anyOf/oneOf 联合类型** (PR [#747](https://github.com/Oaklight/llm-rosetta/pull/747))：Vertex AI 的 schema 清理不再折叠多分支 `anyOf`/`oneOf` 联合类型——仅展开单分支包装器。
-- **`BaseSimpleConverter` 提取** (PR [#745](https://github.com/Oaklight/llm-rosetta/pull/745))：从 embedding、rerank 和 decision 转换器基类中提取公共基类，消除代码重复。
-- **管道编排移至 lib 层** (PR [#746](https://github.com/Oaklight/llm-rosetta/pull/746))：`DecisionConversionPipeline` 及编排逻辑从网关移至库层，使其可在网关外使用。
-
-### Admin — 多 Provider 管理
-
-- **多 Provider 模型展示** (PR [#764](https://github.com/Oaklight/llm-rosetta/pull/764))：模型标签页展示多 Provider 模型的所有 Provider，包含独立的权重、类型和状态。支持内联编辑 Provider 权重和启用/禁用切换。
-- **获取模型弹窗多 Provider 支持** (PR [#694](https://github.com/Oaklight/llm-rosetta/pull/694))："获取模型"对话框可向现有模型添加 Provider，而不仅是创建新模型。
-- **重命名冲突时合并** (PR [#698](https://github.com/Oaklight/llm-rosetta/pull/698))：将模型重命名为已存在的名称时，现在合并 Provider 而非失败。
-- **并行化启动请求** (PR [#763](https://github.com/Oaklight/llm-rosetta/pull/763))：admin UI 同时发起配置、指标和 Provider 请求，消除加载时的白屏延迟。
-
-### Admin — 指标与可观测性
-
-- **Token 用量弹窗** (PR [#759](https://github.com/Oaklight/llm-rosetta/pull/759))：点击模型的 token 计数查看分解（prompt、completion、cache、reasoning），含滚动 24 小时统计。修复多 Provider 模型的徽章列。
-- **多窗口限流** (PR [#760](https://github.com/Oaklight/llm-rosetta/pull/760))：`CompositeLimiter` 支持多个滑动窗口（如 10/分 + 100/小时）。限流配置接受逗号分隔的窗口规格。Admin UI 通过 `GET /admin/api/rate-limits` 内省。
-- **状态码过滤组合框** (PR [#688](https://github.com/Oaklight/llm-rosetta/pull/688))：请求日志过滤器将硬编码的状态码预设替换为支持自定义输入的组合框。
-- **用错误转储上限替代 `error_max`** (PR [#761](https://github.com/Oaklight/llm-rosetta/pull/761))：废弃的 `error_max` 配置键替换为 `error_dump_cap`；旧键触发废弃警告。
-
-### Admin — 认证与 UX 修复
-
-- **用 session store 替代 HMAC admin 认证** (PR [#808](https://github.com/Oaklight/llm-rosetta/pull/808))：admin 认证从 HMAC token 验证迁移到服务端 session store。接受 internal token 用于受信服务的 admin API 访问。
-- **解析 shim 默认值** (PR [#692](https://github.com/Oaklight/llm-rosetta/pull/692))：Provider 编辑弹窗从 shim 默认值预填 `base_url` 和 `api_key_env`；连通性测试使用解析后的值。
-- **修复 Provider logo 解析和 toast 计时器** (PR [#804](https://github.com/Oaklight/llm-rosetta/pull/804))：Provider logo 查找现在正确检查 shim 链；多次快速 toast 不再取消彼此的计时器。
-- **提升 toast z-index** (PR [#806](https://github.com/Oaklight/llm-rosetta/pull/806))：toast 通知现在显示在设置弹窗覆盖层之上。
-- **修复模型菜单和批量选择** (PR [#714](https://github.com/Oaklight/llm-rosetta/pull/714))：模型"⋯"上下文菜单和批量操作栏在数据变更后正确响应。
-- **指标计数器一致性** (PR [#713](https://github.com/Oaklight/llm-rosetta/pull/713))：指标计数器在配置保存、模型删除和 Provider 切换后正确更新。
-
-### 变更 — 转换器内部
-
-- **重命名 passthrough → baseline** (PR [#793](https://github.com/Oaklight/llm-rosetta/pull/793))：将"passthrough"管道概念重命名为"baseline"，更准确地反映其作为保真度比较参考点的角色。
-- **提取 `_emit_residual_tool_call_delta` 辅助函数** (PR [#811](https://github.com/Oaklight/llm-rosetta/pull/811))：将残余 delta 发射逻辑提取到共享辅助函数中，减少流式事件处理器之间的重复。
-- **使用 zerodep validate 生成 decision schema** (PR [#717](https://github.com/Oaklight/llm-rosetta/pull/717))：decision converter schema 生成从手动构造切换到 vendored `zerodep.validate` 模块。
-
-### 修复 — Token 用量
-
-- **Anthropic `total_tokens` 包含缓存 token** (PR [#771](https://github.com/Oaklight/llm-rosetta/pull/771))：Anthropic 的 `cache_creation_input_tokens` 和 `cache_read_input_tokens` 此前未计入 `total_tokens`。同时修复了流式 usage 合并丢失中间 usage 更新的问题。
+- **Provider shim 审计** (PR [#758](https://github.com/Oaklight/llm-rosetta/pull/758))：对照最新 API 文档进行系统审计，通过真实 API 调用验证。主要修复：Anthropic Claude 5 模型 adaptive thinking、OpenAI `max` effort 支持、Volcengine `ARK_API_KEY` 环境变量、MiniMax/Moonshot/Zhipu/OpenRouter reasoning 配置修正。
+- **Provider affinity 路由** (PR [#823](https://github.com/Oaklight/llm-rosetta/pull/823))：`AffinityRoundRobinStrategy` 使用了 Python 按进程随机化的 `hash()`，导致重启和多 worker 部署时 session affinity 失效。替换为 `hashlib.sha256`。
+- **OpenAI Responses 流式处理** (PRs [#765](https://github.com/Oaklight/llm-rosetta/pull/765), [#766](https://github.com/Oaklight/llm-rosetta/pull/766), [#788](https://github.com/Oaklight/llm-rosetta/pull/788), [#792](https://github.com/Oaklight/llm-rosetta/pull/792), [#800](https://github.com/Oaklight/llm-rosetta/pull/800), [#810](https://github.com/Oaklight/llm-rosetta/pull/810))：字符串工具输出不再被 JSON 强制转换；reasoning 在同 turn 含文本/工具时保留；DeepSeek `reasoning_content` 提取；response 级字段和工具定义通过 IR 往返不丢失；`.done` 帧的 function_call 参数正确捕获。
+- **Anthropic `budget_tokens` 与 adaptive thinking** (PR [#805](https://github.com/Oaklight/llm-rosetta/pull/805))：当 `thinking.type` 为 `adaptive` 时剥离 `budget_tokens`（Anthropic API 拒绝此组合）。
+- **工具 schema 清理** (PRs [#747](https://github.com/Oaklight/llm-rosetta/pull/747), [#825](https://github.com/Oaklight/llm-rosetta/pull/825))：保留多分支 `anyOf`/`oneOf` union；缺少 `properties` 时剥离 `required`。
+- **性能** (PRs [#778](https://github.com/Oaklight/llm-rosetta/pull/778), [#782](https://github.com/Oaklight/llm-rosetta/pull/782), [#783](https://github.com/Oaklight/llm-rosetta/pull/783), [#774](https://github.com/Oaklight/llm-rosetta/pull/774), [#777](https://github.com/Oaklight/llm-rosetta/pull/777))：异步 SQLite 持久化、O(1) 清理查询和元数据淘汰、fd 耗尽防护、CLOSE_WAIT socket 泄漏修复。
+- **Admin UI** (PRs [#816](https://github.com/Oaklight/llm-rosetta/pull/816), [#820](https://github.com/Oaklight/llm-rosetta/pull/820), [#821](https://github.com/Oaklight/llm-rosetta/pull/821))：路由环 PR 后 Models 页面空白、favicon SVG 颜色、provider 路由列布局、深色主题文字可见性、toast z-index、settings 弹窗与 modal 冲突。
+- **Shim 加载** (PRs [#667](https://github.com/Oaklight/llm-rosetta/pull/667), [#674](https://github.com/Oaklight/llm-rosetta/pull/674))：`max_tool_description_length` 和 `hoist_system_messages` 未从 provider YAML 加载；CI 守卫测试防止未来字段遗漏。
 
 ### 基础设施
 
-- **Test Release workflow** (PR [#686](https://github.com/Oaklight/llm-rosetta/pull/686))：新增 CI workflow 用于发布 dev 版本到 Test PyPI 并自动构建 Docker dev 镜像。
-- **Docker 镜像标签** (PR [#703](https://github.com/Oaklight/llm-rosetta/pull/703))：新增 `latest-python`、`latest-binary` 和 `dev-python` 便捷标签。
-- **Vendored httpserver/httpclient CLOSE_WAIT 修复** (PR [#780](https://github.com/Oaklight/llm-rosetta/pull/780))。
-- **更新 vendored zerodep 模块** (PRs [#658](https://github.com/Oaklight/llm-rosetta/pull/658), [#710](https://github.com/Oaklight/llm-rosetta/pull/710), [#798](https://github.com/Oaklight/llm-rosetta/pull/798))。
-- **Zerodep 自动更新 CI workflow** (PR [#657](https://github.com/Oaklight/llm-rosetta/pull/657))：自动化更新 vendored zerodep 模块的 workflow。
-- **整理根目录布局** (PR [#754](https://github.com/Oaklight/llm-rosetta/pull/754))：停止在 git 中跟踪 `keys.db`；清理根目录结构。
+- **Test Release 工作流** (PR [#686](https://github.com/Oaklight/llm-rosetta/pull/686))：发布 dev 版本到 Test PyPI，自动构建 Docker dev 镜像。
+- **Vendored zerodep 更新** (PRs [#658](https://github.com/Oaklight/llm-rosetta/pull/658), [#710](https://github.com/Oaklight/llm-rosetta/pull/710), [#798](https://github.com/Oaklight/llm-rosetta/pull/798), [#780](https://github.com/Oaklight/llm-rosetta/pull/780))。
 
 ## v0.13.0 — 2026-09-08
 
@@ -228,9 +72,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Google Interactions 思考透传** (PR [#649](https://github.com/Oaklight/llm-rosetta/pull/649))：启用 `thinking_level` 时在 IR 中设置 `include_thoughts=True`，确保上游 Google API 返回思考内容。
 
 
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 - **安全：已删除/轮换的 API key 仍可通过鉴权** (PR [#652](https://github.com/Oaklight/llm-rosetta/pull/652))：auth hook 中有一个 `config_fallback` 字典（启动时从 `server.api_keys` 构建），在 admin 面板删除/轮换 key 时从未被清除。已撤销的 key 可以绕过 keystore 验证，通过此过期的 fallback 继续鉴权。现已完全移除 `config_fallback` 路径——SQLite keystore 是唯一的 API key 鉴权源。
 - **安全：credential_visible 默认值和持久化** (PR [#654](https://github.com/Oaklight/llm-rosetta/pull/654))：默认值从 `true` 翻转为 `false`，未设置 admin 密码时强制关闭。PUT 端点和 GET 凭据查看端点增加 403 守卫。Admin UI 在无密码时禁用切换按钮。配置 API 响应中敏感字段（admin_password、api_keys）已做脱敏处理。
 - **服务器时间标签** (PR [#655](https://github.com/Oaklight/llm-rosetta/pull/655))："系统时间"改为"服务器时间"以更准确反映含义。时区显示从缩写格式（CDT）改为 GMT±N 格式。
@@ -267,9 +108,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Admin 错误转储按钮**点击无响应的问题。
 - **Admin provider 列表视图**重新设计为紧凑单行布局。
 - **日志导入**移至模块级别以避免重复导入。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -308,9 +146,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **OpenAI Responses reasoning 加密状态** (PR [#576](https://github.com/Oaklight/llm-rosetta/pull/576))：强制同格式 Responses→Responses 流式转换现在保留 `response.output_item.done` 中的 `encrypted_content` 和源 reasoning item ID。此前 IR round-trip 会丢失两者，导致需要回放完成态 reasoning 的客户端（如 `store: false` / ZDR 流程）无法正常工作。修复 [#575](https://github.com/Oaklight/llm-rosetta/issues/575)。
 - **Google GenAI reasoning 配置 round-trip** (PRs [#582](https://github.com/Oaklight/llm-rosetta/pull/582), [#583](https://github.com/Oaklight/llm-rosetta/pull/583), [#584](https://github.com/Oaklight/llm-rosetta/pull/584))：从 REST `generationConfig` 中解析入站 `thinkingConfig`，将 reasoning effort 映射到 `thinkingLevel`，在所有转换器间转发 `summary`/`include_thoughts`。
 - **Responses API reasoning summary 转发** (PR [#582](https://github.com/Oaklight/llm-rosetta/pull/582))：在出站 Responses API 请求中转发 `reasoning.summary`。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -319,9 +154,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ## v0.11.0 — 2026-08-28
 
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -356,9 +188,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Nuitka 独立二进制文件** (PR [#555](https://github.com/Oaklight/llm-rosetta/pull/555)): 6 个平台的预编译单文件可执行程序 — linux-x86_64 (glibc + musl)、linux-arm64 (glibc + musl)、macOS arm64、Windows x86_64。无需 Python 运行时。包含 pyinstrument 性能分析支持。
 - **基于二进制的 Docker 镜像** (PR [#555](https://github.com/Oaklight/llm-rosetta/pull/555)): 三种镜像变体 — `alpine`（musl 二进制，~21 MB，默认）、`glibc`（busybox:glibc，~25 MB）、`python`（pip 安装，~80 MB）。Alpine 变体同时标记为 `:latest` 和 `:<version>`。
 - **Makefile 构建目标** (PR [#555](https://github.com/Oaklight/llm-rosetta/pull/555)): `build-binary`、`build-binary-musl`、`build-docker-alpine`、`build-docker-glibc`、`build-docker-python`，用于本地和 CI 构建。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -392,9 +221,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Google GenAI 多模态工具结果处理** (PR [#525](https://github.com/Oaklight/llm-rosetta/pull/525))：工具结果中的结构化内容块（`list[ContentPart]`）现在原样保留，不再通过 `json.dumps`/`str()` 扁平化。dict 内容使用 `json.dumps`（而非 `str()` 产生无效的 Python repr）。`_is_content_block_list` 守卫区分类型化内容块和普通数据列表。
 - **Chat 转换器多模态内容丢失** (PR [#524](https://github.com/Oaklight/llm-rosetta/pull/524))：`_do_request_to_provider` 未将 `supports_multimodal_tool_result` 传递给 `ir_messages_to_p`，导致 shim 覆盖在实际请求路径中无效。此外，`_convert_tool_result_with_packing` 在标志为 True 时仍然从工具消息中剥离图片——图片被打包但未重新注入，导致内容静默丢失。
 - **测试顺序不稳定** (PR [#523](https://github.com/Oaklight/llm-rosetta/pull/523))：`test_shims.py` fixture 现在保存/恢复全局 shim 注册表而非清空，防止跨模块测试失败。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -410,9 +236,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **Prompt cache 保持** (PR [#499](https://github.com/Oaklight/llm-rosetta/pull/499))：将 `hoist_late_system_messages` IR 变换接入全部 15 个 provider shim。对话中间的 system/developer 消息被改写为 user 角色 `[System: ...]` 信封，保持 prompt cache 前缀稳定。
 - **Per-provider hoist 开关** (PR [#499](https://github.com/Oaklight/llm-rosetta/pull/499))：gateway 配置中的 `hoist_system_messages` 布尔值，可通过 admin UI 复选框按 provider 覆盖，带 (i) 提示弹窗。
 - **SQLite API 密钥存储** (PR [#496](https://github.com/Oaklight/llm-rosetta/pull/496))：将 API 密钥存储从明文配置迁移至 SQLite，使用哈希验证。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -530,9 +353,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **模型启用/禁用开关** ([#382](https://github.com/Oaklight/llm-rosetta/pull/382))：管理面板中为每个模型添加了 ON/OFF 药丸开关。禁用的模型不参与路由（`_parse_models` 跳过 `enabled: false`）。后端路由：`toggle_model`、`bulk_update_models`（批量启用/禁用/删除）。
 - **Embedding 测试菜单** ([#382](https://github.com/Oaklight/llm-rosetta/pull/382))：Embedding 模型现在显示专属测试选项——Embedding、批量（文本数组）、套娃 Matryoshka（用户指定维度）、多模态（图片）。Matryoshka 使用自定义 modal 替代原生 `prompt()` 弹窗。
 - **URL 模板管理面板 UI**：可在 provider 和 model 卡片中直接配置自定义上游 URL 模板。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -558,9 +378,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 - **管理面板 `custom_head` 注入** ([#378](https://github.com/Oaklight/llm-rosetta/pull/378))：`setup_admin()` 接受可选的 `custom_head` HTML 片段，注入到 `</head>` 之前。下游项目可注入 `<style>`/`<script>` 标签来定制管理面板 UI，无需修改参考 `admin.html`。按值缓存，无每次请求开销。
 - **管理面板 `branding` 品牌配置** ([#378](https://github.com/Oaklight/llm-rosetta/pull/378))：`setup_admin(..., branding={title, subtitle, version, links, attribution})` 可定制页头、登录页面和设置页脚。通过 `custom_head` 序列化为 `window.__branding`；`admin.html` 中的消费脚本负责修改 DOM。新增元素 ID：`brandTitle`、`brandLoginTitle`、`brandFooterName`、`brandFooterLinks`。未提供 branding 时，默认 llm-rosetta 标识不变。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -578,9 +395,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 - **Anthropic 和 Google 的工具 Schema 清理** ([#372](https://github.com/Oaklight/llm-rosetta/issues/372))：Anthropic 拒绝工具参数 schema 中的 OpenAPI `nullable` 扩展（例如 Pydantic 生成的 JSON Schema）。新增 `convert_nullable_to_type_array()` helper，递归地将 `"nullable": true` 转换为标准 JSON Schema `"type": [T, "null"]`。Anthropic converter 现在会剥离 `title` 字段并转换 `nullable` 为 type 数组；Google GenAI converter 剥离 `title`（保留 `nullable`——Google 支持该字段）。同时处理了 `nullable: true` 与 `anyOf`/`oneOf` 共存但无 `type` 字段的边界情况。
 - **`flatten_system` 复选框布局和国际化** 修复（网关管理面板）。
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -623,9 +437,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **配置文件写入安全**：`write_config()` 现使用文件锁确保跨进程安全
 - **Vendored httpserver 更新至 0.2.1**：对格式错误的请求返回正确的 HTTP 错误响应，而非静默断开连接
 - **Vendored SSE 更新至 0.3.2**：解析器初始化使用构造函数参数，而非初始化后修改
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
@@ -688,9 +499,6 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 - **视觉能力运行时检查** ([#314](https://github.com/Oaklight/llm-rosetta/pull/314), [#313](https://github.com/Oaklight/llm-rosetta/issues/313))：没有 `vision` 能力的模型会自动将所有图片替换为 `[image not available]`，而非直接转发给上游导致不明错误（如 DeepSeek 的 "unknown variant `image_url`"）。Gateway 日志会记录 warning 包含图片数量和模型名
 - **Unix 域套接字支持** ([#315](https://github.com/Oaklight/llm-rosetta/pull/315))：Gateway 可通过 `--socket/-S` CLI 参数或 `server.socket` 配置字段监听 Unix 套接字而非 TCP。适用于共享多用户主机上的安全部署（`127.0.0.1` 仍会暴露给所有本地用户）。套接字文件权限限制为仅所有者可访问（`0600`），关闭时自动清理
 - **并行工具调用展开** ([#303](https://github.com/Oaklight/llm-rosetta/pull/303), [#300](https://github.com/Oaklight/llm-rosetta/issues/300))：`ProviderShim` 新增 `unwind_parallel_tool_calls` 和 `unwind_parallel_tool_calls_pattern` 字段。启用后，并行工具调用（一条 assistant 消息包含多个 `tool_call`）会在转发前展开为顺序调用-结果对。Argo OpenAI shim 以 `^gemini` pattern 启用 — Gemini 模型获得顺序对；GPT/o 模型不受影响
-- **流式响应 profiler 延迟停止** (PR [#633](https://github.com/Oaklight/llm-rosetta/pull/633))：pyinstrument profiler 现在在整个流式生命周期内运行，而不是在 handler 返回 `StreamingResponse` 时提前停止。
-- **启动时自动重建指标计数器** (PR [#643](https://github.com/Oaklight/llm-rosetta/pull/643))：检测非正常关机后的计数器偏差，从请求日志自动重建。
-- **OpenAI Responses 输入项 `status` 字段** (PR [#650](https://github.com/Oaklight/llm-rosetta/pull/650))：为所有输入项类型添加 `"status": "completed"`。修复火山引擎（豆包模型）400 `MissingParameter` 错误。
 
 ### 变更
 
