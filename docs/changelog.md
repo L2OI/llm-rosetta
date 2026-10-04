@@ -33,6 +33,7 @@ All notable changes to LLM-Rosetta are documented here. This project follows [Ke
 
 ### 修复
 
+- **Anthropic 并行工具流**：为不同工具调用分配独立的内容块索引，按工具调用 ID 路由交错的参数片段，并在结束时关闭所有尚未关闭的工具块；保留原生显式索引，不改变请求历史转换。
 - **Provider shim 审计** (PR [#758](https://github.com/Oaklight/llm-rosetta/pull/758))：对照最新 API 文档进行系统审计，通过真实 API 调用验证。主要修复：Anthropic Claude 5 模型 adaptive thinking、OpenAI `max` effort 支持、Volcengine `ARK_API_KEY` 环境变量、MiniMax/Moonshot/Zhipu/OpenRouter reasoning 配置修正。
 - **Provider affinity 路由** (PR [#823](https://github.com/Oaklight/llm-rosetta/pull/823))：`AffinityRoundRobinStrategy` 使用了 Python 按进程随机化的 `hash()`，导致重启和多 worker 部署时 session affinity 失效。替换为 `hashlib.sha256`。
 - **OpenAI Responses 流式处理** (PRs [#765](https://github.com/Oaklight/llm-rosetta/pull/765), [#766](https://github.com/Oaklight/llm-rosetta/pull/766), [#788](https://github.com/Oaklight/llm-rosetta/pull/788), [#792](https://github.com/Oaklight/llm-rosetta/pull/792), [#800](https://github.com/Oaklight/llm-rosetta/pull/800), [#810](https://github.com/Oaklight/llm-rosetta/pull/810))：字符串工具输出不再被 JSON 强制转换；reasoning 在同 turn 含文本/工具时保留；DeepSeek `reasoning_content` 提取；response 级字段和工具定义通过 IR 往返不丢失；`.done` 帧的 function_call 参数正确捕获。
