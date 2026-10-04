@@ -78,7 +78,10 @@ class AnthropicMessageOps(BaseMessageOps):
         if not isinstance(reasoning_cap, ReasoningCapability):
             reasoning_cap = None
 
+        previous_role = None
         for item in ir_messages:
+            merge_tool_results = previous_role == "tool"
+            previous_role = None
             passthrough_warnings = self._restore_provider_passthrough_item(
                 item,
                 messages,
@@ -90,6 +93,7 @@ class AnthropicMessageOps(BaseMessageOps):
             if is_message(item):
                 msg = cast(Message, item)
                 role = msg.get("role")
+                previous_role = role
                 if role == "system":
                     # System messages handled at converter level
                     continue
@@ -97,7 +101,15 @@ class AnthropicMessageOps(BaseMessageOps):
                     msg, reasoning_cap=reasoning_cap
                 )
                 warnings.extend(msg_warnings)
-                if isinstance(converted, list):
+                if (
+                    role == "tool"
+                    and merge_tool_results
+                    and isinstance(converted, dict)
+                ):
+                    # Chat has one message per result; Anthropic needs the
+                    # entire tool batch in the immediately following user turn.
+                    messages[-1]["content"].extend(converted["content"])
+                elif isinstance(converted, list):
                     messages.extend(converted)
                 elif converted is not None:
                     messages.append(converted)
