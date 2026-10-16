@@ -80,11 +80,19 @@ class ContentBlockStartEvent(TypedDict):
     Content blocks group related deltas (e.g., a text block, a thinking
     block, or a tool_use block). The block_type indicates what kind of
     deltas to expect.
+
+    ``provider_metadata`` carries dialect-specific facts about the block
+    that no other field expresses.  The Responses dialect uses it to name
+    the message item a text block belongs to (``responses_item_id``, with
+    ``responses_phase`` when the item declares one): a response can hold
+    several message items, and the writer needs that to keep them apart
+    (#997).
     """
 
     type: Required[Literal["content_block_start"]]
     block_index: Required[int]  # 0-based block index
     block_type: Required[str]  # "text", "thinking", "tool_use", etc.
+    provider_metadata: NotRequired[dict[str, Any]]
 
 
 class ContentBlockEndEvent(TypedDict):

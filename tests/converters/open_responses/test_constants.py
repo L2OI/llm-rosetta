@@ -99,8 +99,19 @@ class TestResponsesEventType:
 
 
 class TestGenerateMessageId:
-    def test_with_response_id(self):
-        assert generate_message_id("resp_123") == "msg_resp_123"
+    def test_ids_are_opaque_and_prefixed(self):
+        assert generate_message_id("resp_123").startswith("msg_")
+        assert generate_message_id("resp_123") != "msg_resp_123"
 
-    def test_with_empty_response_id(self):
-        assert generate_message_id("") == "msg_"
+    def test_each_index_gets_its_own_id(self):
+        # Two message items in one response must not share an id: a client
+        # that keys items by id reads the second as a repeat of the first.
+        assert generate_message_id("resp_123", 0) != generate_message_id("resp_123", 1)
+
+    def test_same_response_and_index_is_stable(self):
+        assert generate_message_id("resp_123", 2) == generate_message_id("resp_123", 2)
+
+    def test_with_empty_response_id_still_unique(self):
+        first = generate_message_id("")
+        assert first.startswith("msg_")
+        assert first != generate_message_id("")

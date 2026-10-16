@@ -634,3 +634,88 @@ class TestOpenAIResponsesMessageOps:
         assert tc["type"] == "tool_call"
         assert tc["tool_name"] == "get_weather"
         assert tc["tool_input"] == {"city": "NYC"}
+
+
+class TestSameTurnMessageItemGrouping:
+    """Grouping consecutive Responses message items into IR turns (#997)."""
+
+    def setup_method(self):
+        self.message_ops = OpenAIResponsesMessageOps(
+            OpenAIResponsesContentOps(), OpenAIResponsesToolOps()
+        )
+
+    @staticmethod
+    def _message(text: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": text}],
+            **extra,
+        }
+
+    def test_different_phases_stay_separate(self):
+        """A commentary item and a final answer are two IR messages."""
+        items = [
+            self._message("X.", phase="commentary"),
+            self._message("X.", phase="final_answer"),
+        ]
+        ir_messages = cast(list[Any], self.message_ops.p_messages_to_ir(items))
+        assert len(ir_messages) == 2
+        assert [len(m["content"]) for m in ir_messages] == [1, 1]
+        assert [m["provider_metadata"]["responses_phase"] for m in ir_messages] == [
+            "commentary",
+            "final_answer",
+        ]
+
+    def test_an_unphased_item_does_not_join_a_phased_one(self):
+        """An item that declares no phase is a channel of its own."""
+        items = [
+            self._message("X.", phase="commentary"),
+            self._message("X."),
+        ]
+        ir_messages = cast(list[Any], self.message_ops.p_messages_to_ir(items))
+        assert len(ir_messages) == 2
+
+    def test_same_phase_still_merges(self):
+        """Two items of one channel stay one IR message."""
+        items = [
+            self._message("Let me ", phase="commentary"),
+            self._message("check.", phase="commentary"),
+        ]
+        ir_messages = cast(list[Any], self.message_ops.p_messages_to_ir(items))
+        assert len(ir_messages) == 1
+        assert [part["text"] for part in ir_messages[0]["content"]] == [
+            "Let me ",
+            "check.",
+        ]
+
+    def test_reasoning_joins_the_turn_the_next_item_opens(self):
+        """A reasoning item has no phase of its own: it stays with the turn."""
+        items = [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Thinking."}],
+            },
+            self._message("X.", phase="commentary"),
+            self._message("X.", phase="final_answer"),
+        ]
+        ir_messages = cast(list[Any], self.message_ops.p_messages_to_ir(items))
+        assert len(ir_messages) == 2
+        assert [part["type"] for part in ir_messages[0]["content"]] == [
+            "reasoning",
+            "text",
+        ]
+        assert ir_messages[0]["provider_metadata"]["responses_phase"] == "commentary"
+        assert ir_messages[1]["provider_metadata"]["responses_phase"] == "final_answer"
+
+    def test_status_alone_separates_only_when_both_report_one(self):
+        """Lifecycle status is not an item identity: absent is compatible."""
+        conflicting = [
+            self._message("a"),
+            {**self._message("b"), "status": "in_progress"},
+        ]
+        assert len(cast(list[Any], self.message_ops.p_messages_to_ir(conflicting))) == 2
+        unphased = {k: v for k, v in self._message("a").items() if k != "status"}
+        one_absent = [unphased, self._message("b")]
+        assert len(cast(list[Any], self.message_ops.p_messages_to_ir(one_absent))) == 1

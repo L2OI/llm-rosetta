@@ -26,6 +26,7 @@ from ...types.ir import (
     is_image_part,
     is_message,
     is_reasoning_part,
+    is_refusal_part,
     is_text_part,
     is_tool_call_part,
     is_tool_result_part,
@@ -597,18 +598,55 @@ class OpenResponsesMessageOps(BaseMessageOps):
             ir_input.append(current)
         return following
 
-    @staticmethod
-    def _can_merge_assistant_messages(current: dict | None, following: dict) -> bool:
+    @classmethod
+    def _can_merge_assistant_messages(
+        cls, current: dict | None, following: dict
+    ) -> bool:
         if (
             current is None
             or current.get("role") != "assistant"
             or following.get("role") != "assistant"
         ):
             return False
-        # Explicitly different phases/statuses remain separate output messages.
         before = current.get("provider_metadata") or {}
         after = following.get("provider_metadata") or {}
-        return all(before[key] == after[key] for key in before.keys() & after.keys())
+        # ``responses_phase`` names the channel an output item belongs to, and
+        # an item that declares none is a channel of its own: a commentary item
+        # and a final answer are two items, and merging them yields one message
+        # whose body holds both replies (#997).  The boundary only matters once
+        # the turn holds message content — a message with nothing but reasoning
+        # or tool items has no channel yet, and belongs to the turn the next
+        # message item opens — so compare the phases themselves, for a message
+        # that carries content, rather than whatever keys the two dicts merely
+        # have in common.
+        if cls._holds_message_content(current) and before.get(
+            "responses_phase"
+        ) != after.get("responses_phase"):
+            return False
+        # ``responses_status`` is lifecycle metadata rather than identity, so it
+        # separates two messages only when both report one.
+        status_before = before.get("responses_status")
+        status_after = after.get("responses_status")
+        return not (
+            status_before is not None
+            and status_after is not None
+            and status_before != status_after
+        )
+
+    @staticmethod
+    def _holds_message_content(message: dict) -> bool:
+        """Whether an IR message already carries parts of a message item.
+
+        Args:
+            message: IR message to inspect.
+
+        Returns:
+            ``True`` when the message holds text or refusal content.
+        """
+        return any(
+            isinstance(part, dict) and (is_text_part(part) or is_refusal_part(part))
+            for part in message.get("content") or []
+        )
 
     @staticmethod
     def _make_system_event(item: dict[str, Any]) -> dict[str, Any]:

@@ -1357,12 +1357,6 @@ class StreamProcessor:
                 "_response_extras"
             ]
 
-        # Bridge message phase for Responses streaming round-trip
-        if "_responses_phase" in self._from_ctx.metadata:
-            self._to_ctx.metadata["_responses_phase"] = self._from_ctx.metadata[
-                "_responses_phase"
-            ]
-
         # Restore custom tool types for downgraded tools
         if self._custom_tool_names:
             ir_events = self._restore_custom_tool_events(ir_events)

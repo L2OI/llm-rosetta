@@ -107,7 +107,8 @@ class TestOpenAIResponsesStreamContextInheritance:
         assert ctx.tool_call_id_map == {}
         # OpenAIResponsesStreamContext fields
         assert ctx.item_id_to_call_id == {}
-        assert ctx.output_item_emitted is False
+        assert ctx._message_items == []
+        assert ctx.current_message_item is None
 
 
 class TestStreamContextBufferMethods:

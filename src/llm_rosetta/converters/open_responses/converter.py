@@ -64,7 +64,7 @@ from ..base.tools import (
     sanitize_tool_call_id,
     strip_orphaned_tool_config,
 )
-from .stream_context import OpenResponsesStreamContext
+from .stream_context import MessageItemState, OpenResponsesStreamContext
 from ._constants import (
     OPEN_RESPONSES_PRESERVE_FIELDS,
     OPEN_RESPONSES_REQUIRED_DEFAULTS,
@@ -512,18 +512,7 @@ class OpenResponsesConverter(BaseConverter):
         ir_items = self.message_ops.p_messages_to_ir(output_items)
 
         # Collect all content parts into a single assistant message
-        message_content: list[dict[str, Any]] = []
-        message_metadata: dict[str, Any] = {}
-        for ir_item in ir_items:
-            if isinstance(ir_item, dict) and "role" in ir_item:
-                content = ir_item.get("content", [])
-                message_content.extend(cast(list, content))
-                # Capture provider_metadata from first assistant message
-                pm = ir_item.get("provider_metadata")
-                if pm and not message_metadata:
-                    message_metadata = pm
-            elif isinstance(ir_item, dict) and "type" in ir_item:
-                pass
+        message_content, message_metadata = self._flatten_message_items(ir_items)
 
         if message_content:
             ir_msg: dict[str, Any] = {
@@ -574,6 +563,40 @@ class OpenResponsesConverter(BaseConverter):
 
         return ir_response
 
+    def _flatten_message_items(
+        self, ir_items: list[Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Collapse a response's IR items into the one message a choice holds.
+
+        A choice holds a single IR message, so a response's several message
+        items — the commentary and the final answer an agent run reports
+        apart — collapse into it here.  Each item's phase is recorded on its
+        text parts so the boundary stays recoverable: without it the write
+        leg rebuilds one item whose body holds both replies (#997).
+
+        Args:
+            ir_items: IR items read from the response's ``output``.
+
+        Returns:
+            The message's content parts, and the provider metadata of the
+            first item that carried any.
+        """
+        message_content: list[dict[str, Any]] = []
+        message_metadata: dict[str, Any] = {}
+        for ir_item in ir_items:
+            if not (isinstance(ir_item, dict) and "role" in ir_item):
+                continue
+            content = cast(list, ir_item.get("content", []))
+            item_phase = (ir_item.get("provider_metadata") or {}).get("responses_phase")
+            if item_phase:
+                for part in content:
+                    self._stamp_text_part_phase(part, item_phase)
+            message_content.extend(content)
+            pm = ir_item.get("provider_metadata")
+            if pm and not message_metadata:
+                message_metadata = pm
+        return message_content, message_metadata
+
     def _do_response_to_provider(
         self,
         ir_response: IRResponse,
@@ -594,7 +617,7 @@ class OpenResponsesConverter(BaseConverter):
             "status": "completed",  # may be overwritten by finish_reason below
         }
 
-        msg_item_id = generate_message_id(response_id_stem)
+        output = provider_response["output"]
 
         for choice in ir_response.get("choices", []):
             message = choice.get("message")
@@ -602,23 +625,44 @@ class OpenResponsesConverter(BaseConverter):
                 continue
 
             content_parts = message.get("content", [])
-            text_parts: list[dict[str, Any]] = []
+            # Group the text parts by the item they came from.  The read leg
+            # folds a response's message items into one IR message, so each
+            # part records its own item's phase; writing them all back as a
+            # single item would make a commentary item and a final answer
+            # share one body (#997).
+            text_groups: list[tuple[str, list[dict[str, Any]]]] = []
             reasoning_index = 0
 
             for part in content_parts:
                 if is_text_part(part):
-                    text_parts.append(
+                    self._append_text_part(
+                        text_groups,
                         {
                             "type": "output_text",
                             "text": part["text"],
                             "annotations": [],
                             "logprobs": [],
-                        }
+                        },
+                        self._part_phase(part, message),
                     )
-                elif is_tool_call_part(part) or is_tool_result_part(part):
-                    self._append_tool_item(part, context, provider_response["output"])
+                elif is_citation_part(part):
+                    self._attach_annotation_to_text(
+                        part,
+                        text_groups[-1][1] if text_groups else [],
+                        self._citation_warnings(context, kwargs),
+                    )
+                elif is_refusal_part(part):
+                    self._append_text_part(
+                        text_groups,
+                        self.content_ops.ir_refusal_to_p(part),
+                        self._part_phase(part, message),
+                    )
+                # Each of the remaining part types is an item of its own, so
+                # the message text collected so far is written ahead of it and
+                # the response's items keep the order the IR lists them.
                 elif is_reasoning_part(part):
-                    provider_response["output"].append(
+                    self._flush_message_items(text_groups, output, response_id_stem)
+                    output.append(
                         self.content_ops.ir_reasoning_to_p(
                             part,
                             output_item=True,
@@ -627,27 +671,11 @@ class OpenResponsesConverter(BaseConverter):
                         )
                     )
                     reasoning_index += 1
-                elif is_citation_part(part):
-                    self._attach_annotation_to_text(
-                        part, text_parts, self._citation_warnings(context, kwargs)
-                    )
-                elif is_refusal_part(part):
-                    text_parts.append(self.content_ops.ir_refusal_to_p(part))
+                elif is_tool_call_part(part) or is_tool_result_part(part):
+                    self._flush_message_items(text_groups, output, response_id_stem)
+                    self._append_tool_item(part, context, output)
 
-            msg_insert_pos = len(provider_response["output"])
-            if text_parts:
-                msg_item: dict[str, Any] = {
-                    "id": msg_item_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": text_parts,
-                }
-                # Restore phase from IR message provider_metadata
-                phase = message.get("provider_metadata", {}).get("responses_phase")
-                if phase:
-                    msg_item["phase"] = phase
-                provider_response["output"].insert(msg_insert_pos, msg_item)
+            self._flush_message_items(text_groups, output, response_id_stem)
 
             # Set finish reason
             finish_reason = choice.get("finish_reason", {}).get("reason", "stop")
@@ -810,6 +838,101 @@ class OpenResponsesConverter(BaseConverter):
         )
         if item:
             output.append(item)
+
+    @staticmethod
+    def _stamp_text_part_phase(part: Any, phase: str) -> None:
+        """Record the message item's phase on one of its text parts.
+
+        Takes ``Any`` because not every member of the content-part union
+        declares ``provider_metadata``.  Text is the part a phased item
+        carries in practice; a refusal part is left to the message-level
+        phase the write leg falls back on.
+
+        Args:
+            part: IR content part to stamp; non-text parts are left alone.
+            phase: Phase of the message item the part came from.
+        """
+        if not isinstance(part, dict) or not is_text_part(part):
+            return
+        metadata = part.get("provider_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            part["provider_metadata"] = metadata
+        metadata["responses_phase"] = phase
+
+    @staticmethod
+    def _part_phase(part: Any, message: Mapping[str, Any]) -> str:
+        """Phase of the message item a text part came from.
+
+        The read leg records an item's phase on each of its parts, because a
+        response's several message items collapse into the one IR message a
+        choice can hold.  The message-level phase is the fallback, for IR
+        built by hand or by an older version.
+
+        Args:
+            part: IR content part.
+            message: The IR message the part belongs to.
+
+        Returns:
+            The item's phase, or ``""`` when it has none.
+        """
+        metadata = part.get("provider_metadata") or {}
+        phase = metadata.get("responses_phase")
+        if isinstance(phase, str) and phase:
+            return phase
+        message_phase = (message.get("provider_metadata") or {}).get("responses_phase")
+        return message_phase if isinstance(message_phase, str) else ""
+
+    def _flush_message_items(
+        self,
+        groups: list[tuple[str, list[dict[str, Any]]]],
+        output: list[dict[str, Any]],
+        response_id: str,
+    ) -> None:
+        """Emit the text parts collected so far as message items.
+
+        One item per group, placed where its parts appear in the IR — the
+        response's items keep the order the upstream reported them in — and
+        numbered after the items already emitted, so the ids stay unique
+        across the whole response rather than within one choice (#997).
+
+        Args:
+            groups: ``(phase, parts)`` pairs waiting to be written; emptied.
+            output: The response's ``output`` list, extended in place.
+            response_id: Response the items belong to, for id generation.
+        """
+        for phase, parts in groups:
+            item: dict[str, Any] = {
+                "id": generate_message_id(
+                    response_id, sum(1 for i in output if i.get("type") == "message")
+                ),
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": parts,
+            }
+            if phase:
+                item["phase"] = phase
+            output.append(item)
+        groups.clear()
+
+    @staticmethod
+    def _append_text_part(
+        groups: list[tuple[str, list[dict[str, Any]]]],
+        part: dict[str, Any],
+        phase: str,
+    ) -> None:
+        """Add a text or refusal part to its phase group, opening one if needed.
+
+        Args:
+            groups: ``(phase, parts)`` pairs collected so far, in part order.
+            part: Provider-format content part to file.
+            phase: Phase of the message item the part came from.
+        """
+        if groups and groups[-1][0] == phase:
+            groups[-1][1].append(part)
+        else:
+            groups.append((phase, [part]))
 
     @staticmethod
     def _build_ir_usage_to_p(ir_usage: Mapping[str, Any]) -> dict[str, Any]:
@@ -1225,10 +1348,15 @@ class OpenResponsesConverter(BaseConverter):
                 # ``ContentBlockStartEvent`` here would cause duplicate
                 # ``response.content_part.added`` events on round-trip.
                 #
-                # Capture phase for streaming round-trip.
-                phase = item.get("phase")
-                if phase and context is not None:
-                    context.metadata["_responses_phase"] = phase
+                # Remember which item this is instead: the blocks that
+                # follow carry its id and phase, which is how the write leg
+                # tells a turn's several message items apart (#997).
+                if isinstance(context, OpenResponsesStreamContext):
+                    context._inbound_message_item_id = item.get("id", "")
+                    side = item.get("phase")
+                    context._inbound_message_phase = (
+                        side if isinstance(side, str) else ""
+                    )
 
             elif item_type in ("tool_search_call", "tool_search_output"):
                 events.append(
@@ -1364,13 +1492,26 @@ class OpenResponsesConverter(BaseConverter):
             elif part_type == "refusal":
                 block_type = "refusal"
             block_index = context.next_block_index()
-            events.append(
-                ContentBlockStartEvent(
-                    type="content_block_start",
-                    block_index=block_index,
-                    block_type=block_type,
-                )
+            event = ContentBlockStartEvent(
+                type="content_block_start",
+                block_index=block_index,
+                block_type=block_type,
             )
+            # A text or refusal block belongs to the message item that
+            # announced it: carrying that item's id and phase keeps a turn's
+            # several message items separable on the write leg (#997).
+            if (
+                block_type in ("text", "refusal")
+                and isinstance(context, OpenResponsesStreamContext)
+                and context._inbound_message_item_id
+            ):
+                metadata: dict[str, Any] = {
+                    "responses_item_id": context._inbound_message_item_id,
+                }
+                if context._inbound_message_phase:
+                    metadata["responses_phase"] = context._inbound_message_phase
+                event["provider_metadata"] = metadata
+            events.append(event)
 
     def _handle_p_content_part_done_to_ir(
         self,
@@ -1798,82 +1939,166 @@ class OpenResponsesConverter(BaseConverter):
             context.current_block_type = block_type
         if block_type in ("text", "refusal"):
             content_part_type = "refusal" if block_type == "refusal" else "output_text"
-            if context is not None and not context.output_item_emitted:
-                return build_message_preamble_events(context, content_part_type)
             from .utils import _build_content_part
 
-            item_id = context.item_id if context is not None else ""
-            msg_idx = context._message_output_index if context is not None else 0
+            if not isinstance(context, OpenResponsesStreamContext):
+                # No context, so no item tracking: the block is reported as a
+                # part on its own (backward compatible).
+                return {
+                    "type": ResponsesEventType.CONTENT_PART_ADDED,
+                    "item_id": "",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "part": _build_content_part(content_part_type),
+                }
+
+            phase, source_item_id = self._block_message_item(event)
+            current = context.current_message_item
+            results: list[dict[str, Any]] = []
+            if current is None or not self._continues_message_item(
+                current, phase, source_item_id
+            ):
+                # A new upstream message item: close the one being written
+                # before opening its successor, or the client reads both as
+                # the same item and renders the reply twice (#997).
+                if current is not None:
+                    results.extend(self._close_message_item_events(current))
+                results.extend(
+                    build_message_preamble_events(
+                        context,
+                        content_part_type,
+                        phase=phase,
+                        source_item_id=source_item_id,
+                    )
+                )
+                return results
+            # Another content part of the item already open (Responses
+            # carries several per item, e.g. output text then a refusal).
             return {
                 "type": ResponsesEventType.CONTENT_PART_ADDED,
-                "item_id": item_id,
-                "output_index": msg_idx,
+                "item_id": current.item_id,
+                "output_index": current.output_index,
                 "content_index": 0,
                 "part": _build_content_part(content_part_type),
             }
         # Other block types are no-ops for now
         return {}
 
+    @staticmethod
+    def _block_message_item(event: ContentBlockStartEvent) -> tuple[str, str]:
+        """Read the upstream message item a text block belongs to.
+
+        The read leg tags a text block with the message item that announced
+        it, which is how the write leg tells a continuation from a new item.
+        Both fields are absent for a dialect with no such notion, and then
+        every block belongs to the item already open.
+
+        Args:
+            event: IR content block start event.
+
+        Returns:
+            ``(phase, source_item_id)``; either may be ``""``.
+        """
+        metadata = event.get("provider_metadata") or {}
+        phase = metadata.get("responses_phase", "")
+        source_item_id = metadata.get("responses_item_id", "")
+        return (
+            phase if isinstance(phase, str) else "",
+            source_item_id if isinstance(source_item_id, str) else "",
+        )
+
+    @staticmethod
+    def _continues_message_item(
+        item: MessageItemState, phase: str, source_item_id: str
+    ) -> bool:
+        """Whether a text block continues the message item being written.
+
+        An upstream item id decides it when both sides have one; the phase is
+        the fallback for a stream that reported no ids, since two items that
+        report different phases are different items however they are keyed.
+        """
+        if source_item_id and item.source_item_id:
+            return source_item_id == item.source_item_id
+        return phase == item.phase
+
     def _handle_ir_content_block_end_to_p(
         self,
         event: ContentBlockEndEvent,
         context: OpenResponsesStreamContext | None,
     ) -> dict[str, Any] | list[dict[str, Any]]:
-        if context is not None:
-            context.content_part_done_emitted = True
-            item_id = context.item_id
-            msg_idx = context._message_output_index
-            is_refusal = context.current_block_type == "refusal"
-            if is_refusal:
-                accumulated = context.accumulated_refusal
-                return [
-                    {
-                        "type": ResponsesEventType.REFUSAL_DONE,
-                        "item_id": item_id,
-                        "output_index": msg_idx,
-                        "content_index": 0,
-                        "refusal": accumulated,
-                    },
-                    {
-                        "type": ResponsesEventType.CONTENT_PART_DONE,
-                        "item_id": item_id,
-                        "output_index": msg_idx,
-                        "content_index": 0,
-                        "part": {
-                            "type": "refusal",
-                            "refusal": accumulated,
-                        },
-                    },
-                ]
-            accumulated = context.accumulated_text
+        if not isinstance(context, OpenResponsesStreamContext):
+            return {
+                "type": ResponsesEventType.CONTENT_PART_DONE,
+                "part": {
+                    "type": "output_text",
+                },
+            }
+        item = context.current_message_item
+        if item is None:
+            return {}
+        item.content_part_type = (
+            "refusal" if context.current_block_type == "refusal" else "output_text"
+        )
+        return self._content_part_done_events(item)
+
+    @staticmethod
+    def _content_part_done_events(item: MessageItemState) -> list[dict[str, Any]]:
+        """The events that close one message item's content part.
+
+        Responses ends a part with a type-specific ``*.done`` and a
+        ``content_part.done`` carrying the whole part.
+
+        Args:
+            item: Message item state whose part is ending.
+
+        Returns:
+            Two SSE event dicts.
+        """
+        item.content_part_done_emitted = True
+        is_refusal = item.content_part_type == "refusal"
+        accumulated = item.accumulated_refusal if is_refusal else item.accumulated_text
+        if is_refusal:
             return [
                 {
-                    "type": ResponsesEventType.OUTPUT_TEXT_DONE,
-                    "item_id": item_id,
-                    "output_index": msg_idx,
+                    "type": ResponsesEventType.REFUSAL_DONE,
+                    "item_id": item.item_id,
+                    "output_index": item.output_index,
                     "content_index": 0,
-                    "text": accumulated,
-                    "logprobs": [],
+                    "refusal": accumulated,
                 },
                 {
                     "type": ResponsesEventType.CONTENT_PART_DONE,
-                    "item_id": item_id,
-                    "output_index": msg_idx,
+                    "item_id": item.item_id,
+                    "output_index": item.output_index,
                     "content_index": 0,
                     "part": {
-                        "type": "output_text",
-                        "text": accumulated,
-                        "annotations": [],
-                        "logprobs": [],
+                        "type": "refusal",
+                        "refusal": accumulated,
                     },
                 },
             ]
-        return {
-            "type": ResponsesEventType.CONTENT_PART_DONE,
-            "part": {
-                "type": "output_text",
+        return [
+            {
+                "type": ResponsesEventType.OUTPUT_TEXT_DONE,
+                "item_id": item.item_id,
+                "output_index": item.output_index,
+                "content_index": 0,
+                "text": accumulated,
+                "logprobs": [],
             },
-        }
+            {
+                "type": ResponsesEventType.CONTENT_PART_DONE,
+                "item_id": item.item_id,
+                "output_index": item.output_index,
+                "content_index": 0,
+                "part": {
+                    "type": "output_text",
+                    "text": accumulated,
+                    "annotations": [],
+                    "logprobs": [],
+                },
+            },
+        ]
 
     def _handle_ir_citation_delta_to_p(
         self, event: CitationDeltaEvent, context: StreamContext | None
@@ -1888,14 +2113,13 @@ class OpenResponsesConverter(BaseConverter):
         stream_context = (
             context if isinstance(context, OpenResponsesStreamContext) else None
         )
-        item_id = stream_context.item_id if stream_context is not None else ""
-        msg_idx = (
-            stream_context._message_output_index if stream_context is not None else 0
-        )
+        # The annotation belongs to the message item being written, which is
+        # where the text it annotates went.
+        item = stream_context.current_message_item if stream_context else None
         return {
             "type": ResponsesEventType.OUTPUT_TEXT_ANNOTATION_ADDED,
-            "item_id": item_id,
-            "output_index": msg_idx,
+            "item_id": item.item_id if item is not None else "",
+            "output_index": item.output_index if item is not None else 0,
             "content_index": 0,
             "annotation": annotation,
         }
@@ -1910,19 +2134,20 @@ class OpenResponsesConverter(BaseConverter):
         # Emit output_item.added + content_part.added before the first
         # text delta so clients (e.g. Codex CLI) can register the item.
         preamble: list[dict[str, Any]] = []
-        if context is not None and not context.output_item_emitted:
+        if context is not None and context.current_message_item is None:
             preamble = build_message_preamble_events(context)
 
-        # Accumulate text in context for response.completed output
-        if context is not None:
-            context.accumulated_text += text
+        item = context.current_message_item if context is not None else None
 
-        msg_idx = context._message_output_index if context is not None else 0
-        item_id = context.item_id if context is not None else ""
+        # Accumulate text on the item for its done events and for
+        # response.completed's output array
+        if item is not None:
+            item.accumulated_text += text
+
         delta_event: dict[str, Any] = {
             "type": ResponsesEventType.OUTPUT_TEXT_DELTA,
-            "item_id": item_id,
-            "output_index": msg_idx,
+            "item_id": item.item_id if item is not None else "",
+            "output_index": item.output_index if item is not None else 0,
             "content_index": 0,
             "delta": text,
             "logprobs": [],
@@ -1940,18 +2165,17 @@ class OpenResponsesConverter(BaseConverter):
         refusal = event["refusal"]
 
         preamble: list[dict[str, Any]] = []
-        if context is not None and not context.output_item_emitted:
+        if context is not None and context.current_message_item is None:
             preamble = build_message_preamble_events(context, "refusal")
 
-        if context is not None:
-            context.accumulated_refusal += refusal
+        item = context.current_message_item if context is not None else None
+        if item is not None:
+            item.accumulated_refusal += refusal
 
-        msg_idx = context._message_output_index if context is not None else 0
-        item_id = context.item_id if context is not None else ""
         delta_event: dict[str, Any] = {
             "type": ResponsesEventType.REFUSAL_DELTA,
-            "item_id": item_id,
-            "output_index": msg_idx,
+            "item_id": item.item_id if item is not None else "",
+            "output_index": item.output_index if item is not None else 0,
             "content_index": 0,
             "delta": refusal,
         }
@@ -2356,24 +2580,23 @@ class OpenResponsesConverter(BaseConverter):
                 reasoning_item["encrypted_content"] = item.encrypted_content
             entries.append((item.output_index, reasoning_item))
 
-        accumulated = context.accumulated_text
-        if accumulated:
+        for item in context._message_items:
+            if not item.accumulated_text:
+                continue
             msg_item: dict[str, Any] = {
-                "id": context.item_id,
+                "id": item.item_id,
                 "type": "message",
                 "role": "assistant",
-                "content": [{"type": "output_text", "text": accumulated}],
+                "content": [{"type": "output_text", "text": item.accumulated_text}],
             }
-            # Restore phase from context if available
-            phase = context.metadata.get("_responses_phase")
-            if phase:
-                msg_item["phase"] = phase
+            if item.phase:
+                msg_item["phase"] = item.phase
             if context.metadata_mode == "preserve":
                 msg_item["status"] = "completed"
                 for part in msg_item.get("content", []):
                     part.setdefault("annotations", [])
                     part.setdefault("logprobs", [])
-            entries.append((context._message_output_index, msg_item))
+            entries.append((item.output_index, msg_item))
 
         for call_id in context.tool_call_ids:
             tool_name = context.get_tool_name(call_id)
@@ -2618,61 +2841,74 @@ class OpenResponsesConverter(BaseConverter):
         context: OpenResponsesStreamContext,
         results: list[dict[str, Any]],
     ) -> None:
-        """Emit text done events if we had text output."""
-        if not context.output_item_emitted:
-            return
+        """Emit done events for every message item not yet closed."""
+        for item in context._message_items:
+            if not item.output_item_done_emitted:
+                results.extend(self._close_message_item_events(item))
 
-        accumulated = context.accumulated_text
-        item_id = context.item_id
-        msg_idx = context._message_output_index
+    def _close_message_item_events(
+        self, item: MessageItemState
+    ) -> list[dict[str, Any]]:
+        """Emit the events that end one message item.
 
-        # Only emit output_text.done + content_part.done if not
-        # already emitted by a prior ContentBlockEndEvent
-        if not context.content_part_done_emitted:
-            results.append(
-                {
-                    "type": ResponsesEventType.OUTPUT_TEXT_DONE,
-                    "item_id": item_id,
-                    "output_index": msg_idx,
-                    "content_index": 0,
-                    "text": accumulated,
-                    "logprobs": [],
-                }
-            )
-            results.append(
-                {
-                    "type": ResponsesEventType.CONTENT_PART_DONE,
-                    "item_id": item_id,
-                    "output_index": msg_idx,
-                    "content_index": 0,
-                    "part": {
-                        "type": "output_text",
-                        "text": accumulated,
-                        "annotations": [],
-                        "logprobs": [],
-                    },
-                }
-            )
+        A turn's items close one at a time: the item that was being written
+        when the next one opened is closed at that split, and whatever is
+        still open is closed by the terminal flush.  Both go through here so
+        an item cannot be closed twice or left open.
+
+        Args:
+            item: Message item state to close.
+
+        Returns:
+            The ``*.done`` and ``output_item.done`` events for the item.
+        """
+        results: list[dict[str, Any]] = []
+        # Only emit output_text.done + content_part.done if not already
+        # emitted by a prior ContentBlockEndEvent
+        if not item.content_part_done_emitted:
+            results.extend(self._content_part_done_events(item))
+        item.output_item_done_emitted = True
         results.append(
             {
                 "type": ResponsesEventType.OUTPUT_ITEM_DONE,
-                "output_index": msg_idx,
-                "item": {
-                    "id": item_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": accumulated,
-                            "annotations": [],
-                            "logprobs": [],
-                        }
-                    ],
-                },
+                "output_index": item.output_index,
+                "item": self._message_item_done_payload(item),
             }
         )
+        return results
+
+    @staticmethod
+    def _message_item_done_payload(item: MessageItemState) -> dict[str, Any]:
+        """Build the message item an ``output_item.done`` event carries.
+
+        Args:
+            item: Message item state being closed.
+
+        Returns:
+            The completed item, with its own id, phase and parts.
+        """
+        content: list[dict[str, Any]] = []
+        if item.accumulated_text:
+            content.append(
+                {
+                    "type": "output_text",
+                    "text": item.accumulated_text,
+                    "annotations": [],
+                    "logprobs": [],
+                }
+            )
+        if item.accumulated_refusal:
+            content.append({"type": "refusal", "refusal": item.accumulated_refusal})
+        payload: dict[str, Any] = {
+            "id": item.item_id,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": content,
+        }
+        if item.phase:
+            payload["phase"] = item.phase
+        return payload
 
     def _emit_tool_call_done_events(
         self,

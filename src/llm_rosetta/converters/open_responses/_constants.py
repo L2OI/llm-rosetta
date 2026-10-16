@@ -72,9 +72,29 @@ RESPONSES_REASON_TO_INCOMPLETE_REASON: dict[str, str] = {
 # --- ID generation ---
 
 
-def generate_message_id(response_id: str) -> str:
-    """Generate a message item ID from the response ID."""
-    return f"msg_{response_id or ''}"
+def generate_message_id(response_id: str, index: int = 0) -> str:
+    """Generate a deterministic message item ID.
+
+    A response can carry more than one message item (an upstream that
+    reports its commentary apart from its final answer streams two), and
+    clients key output items by id, so every item needs its own.  Mixing
+    the item's position into the seed gives that without giving up the
+    idempotence of :func:`generate_reasoning_id` — converting the same IR
+    twice yields the same ids.
+
+    Falls back to a random UUID when no response_id is available.
+
+    Args:
+        response_id: Response the item belongs to.
+        index: Position of the item among the response's message items.
+
+    Returns:
+        The item ID (e.g. ``msg_9f2c...``).
+    """
+    if response_id:
+        seed = f"{response_id}:message:{index}"
+        return f"msg_{hashlib.sha256(seed.encode()).hexdigest()[:24]}"
+    return f"msg_{uuid.uuid4().hex[:24]}"
 
 
 def generate_reasoning_id(response_id: str, index: int = 0) -> str:

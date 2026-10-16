@@ -35,7 +35,7 @@ def resolve_call_id(chunk: dict[str, Any], context: StreamContext | None) -> str
 
 def _build_message_item_skeleton(
     item_id: str,
-    context: OpenResponsesStreamContext,
+    phase: str = "",
 ) -> dict[str, Any]:
     """Build message item dict for output_item.added, including phase if available."""
     item: dict[str, Any] = {
@@ -45,7 +45,6 @@ def _build_message_item_skeleton(
         "status": "in_progress",
         "content": [],
     }
-    phase = context.metadata.get("_responses_phase")
     if phase:
         item["phase"] = phase
     return item
@@ -66,35 +65,46 @@ def _build_content_part(content_part_type: str) -> dict[str, Any]:
 def build_message_preamble_events(
     context: OpenResponsesStreamContext,
     content_part_type: str = "output_text",
+    *,
+    phase: str = "",
+    source_item_id: str = "",
 ) -> list[dict[str, Any]]:
     """Build output_item.added + content_part.added for a new message item.
 
-    Allocates the next output_index from the unified counter and marks
-    the context as having emitted the message output item.  Must only
-    be called when ``context.output_item_emitted`` is ``False``.
+    Allocates the next output_index from the unified counter and registers
+    the item on the context.  Every call opens a *new* item with its own id:
+    a turn that carries more than one — a commentary item, then a final
+    answer — is streamed as one item each, and clients that key items by id
+    would read two that shared one as a repeat of the first (#997).
 
     Args:
         context: Responses stream context.
         content_part_type: The content part type for the added event
             (``"output_text"`` or ``"refusal"``).
+        phase: Upstream phase of the item, when it reports one.
+        source_item_id: Id of the upstream item this one mirrors, when known.
 
     Returns:
         Two-element list of SSE event dicts.
     """
-    context.output_item_emitted = True
     output_index = context.next_output_index()
-    context._message_output_index = output_index
-    item_id = generate_message_id(context.response_id)
-    context.item_id = item_id
+    item_id = generate_message_id(context.response_id, len(context._message_items))
+    item = context.start_message_item(
+        item_id,
+        output_index,
+        phase=phase,
+        source_item_id=source_item_id,
+        content_part_type=content_part_type,
+    )
     return [
         {
             "type": ResponsesEventType.OUTPUT_ITEM_ADDED,
             "output_index": output_index,
-            "item": _build_message_item_skeleton(item_id, context),
+            "item": _build_message_item_skeleton(item.item_id, phase),
         },
         {
             "type": ResponsesEventType.CONTENT_PART_ADDED,
-            "item_id": item_id,
+            "item_id": item.item_id,
             "output_index": output_index,
             "content_index": 0,
             "part": _build_content_part(content_part_type),

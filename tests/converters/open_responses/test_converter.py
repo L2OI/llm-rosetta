@@ -1602,3 +1602,189 @@ class TestMessagePhase:
         ]
         assert len(assistant_msgs) >= 1
         assert assistant_msgs[0].get("phase") == "commentary"
+
+
+class TestDistinctMessageItemIds:
+    """Every message item in one response gets its own id (#997)."""
+
+    def setup_method(self):
+        self.converter = OpenAIResponsesConverter()
+
+    def test_each_choice_gets_its_own_id(self):
+        """A Chat upstream answering n=2 must not repeat one item id."""
+        ir_response = cast(
+            IRResponse,
+            {
+                "id": "chatcmpl-ABC",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "SAME"}],
+                        },
+                        "finish_reason": {"reason": "stop"},
+                    },
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "SAME"}],
+                        },
+                        "finish_reason": {"reason": "stop"},
+                    },
+                ],
+            },
+        )
+        output = self.converter.response_to_provider(ir_response)["output"]
+        ids = [item["id"] for item in output]
+        assert len(ids) == 2
+        assert len(set(ids)) == 2
+
+    def test_conversion_is_idempotent(self):
+        """The same IR response converts to the same ids."""
+        ir_response = cast(
+            IRResponse,
+            {
+                "id": "chatcmpl-ABC",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "hi"}],
+                        },
+                        "finish_reason": {"reason": "stop"},
+                    }
+                ],
+            },
+        )
+        first = self.converter.response_to_provider(ir_response)["output"]
+        second = self.converter.response_to_provider(ir_response)["output"]
+        assert [item["id"] for item in first] == [item["id"] for item in second]
+
+
+class TestMultipleMessageItemsInOneResponse:
+    """A response's several message items stay several items (#997)."""
+
+    def setup_method(self):
+        self.converter = OpenAIResponsesConverter()
+
+    @staticmethod
+    def _response(*items: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": "resp_phase_1",
+            "object": "response",
+            "model": "gpt-5.3-codex",
+            "status": "completed",
+            "output": list(items),
+        }
+
+    @staticmethod
+    def _message(item_id: str, text: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "id": item_id,
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": text}],
+            **extra,
+        }
+
+    def test_commentary_and_final_answer_stay_apart(self):
+        """Identical text in two phased items must not fold into one body."""
+        restored = self.converter.response_to_provider(
+            self.converter.response_from_provider(
+                self._response(
+                    self._message("msg_1", "X.", phase="commentary"),
+                    self._message("msg_2", "X.", phase="final_answer"),
+                )
+            )
+        )
+        messages = [i for i in restored["output"] if i.get("type") == "message"]
+        assert [m["phase"] for m in messages] == ["commentary", "final_answer"]
+        assert [len(m["content"]) for m in messages] == [1, 1]
+        assert len({m["id"] for m in messages}) == 2
+
+    def test_a_single_message_item_stays_one_item(self):
+        """One upstream message item converts to one item, phase intact."""
+        restored = self.converter.response_to_provider(
+            self.converter.response_from_provider(
+                self._response(self._message("msg_1", "Only once.", phase="commentary"))
+            )
+        )
+        messages = [i for i in restored["output"] if i.get("type") == "message"]
+        assert len(messages) == 1
+        assert messages[0]["phase"] == "commentary"
+        assert messages[0]["content"] == [
+            {
+                "type": "output_text",
+                "text": "Only once.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ]
+
+    def test_items_keep_the_order_the_upstream_reported(self):
+        """Reasoning, message and tool call come back in that order."""
+        restored = self.converter.response_to_provider(
+            self.converter.response_from_provider(
+                self._response(
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [{"type": "summary_text", "text": "Thinking."}],
+                    },
+                    self._message("msg_1", "Let me check.", phase="commentary"),
+                    {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "get_weather",
+                        "arguments": "{}",
+                    },
+                )
+            )
+        )
+        assert [i["type"] for i in restored["output"]] == [
+            "reasoning",
+            "message",
+            "function_call",
+        ]
+        message = restored["output"][1]
+        assert message["phase"] == "commentary"
+        assert message["content"] == [
+            {
+                "type": "output_text",
+                "text": "Let me check.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ]
+
+    def test_preserve_mode_restores_each_items_own_id(self):
+        """Item metadata lands on the item it came from, not a neighbour."""
+        from llm_rosetta.converters.base.context import ConversionContext
+
+        context = ConversionContext(options={"metadata_mode": "preserve"})
+        restored = self.converter.response_to_provider(
+            self.converter.response_from_provider(
+                self._response(
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [{"type": "summary_text", "text": "Thinking."}],
+                    },
+                    self._message("msg_1", "Checking.", phase="commentary"),
+                    self._message("msg_2", "Done.", phase="final_answer"),
+                ),
+                context=context,
+            ),
+            context=context,
+        )
+        assert [(i["type"], i["id"]) for i in restored["output"]] == [
+            ("reasoning", "rs_1"),
+            ("message", "msg_1"),
+            ("message", "msg_2"),
+        ]

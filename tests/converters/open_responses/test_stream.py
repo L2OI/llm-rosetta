@@ -2958,11 +2958,11 @@ class TestStreamingMessagePhase:
                 results.append(out)
         return results, ctx
 
-    def test_p_to_ir_captures_phase_from_output_item_added(self):
-        """output_item.added with phase captures it into context."""
+    def test_p_to_ir_tags_the_block_with_its_message_item(self):
+        """The block that follows a message item carries that item's id/phase."""
         ctx = OpenAIResponsesStreamContext()
         ctx.mark_started()
-        chunk = {
+        added = {
             "type": "response.output_item.added",
             "output_index": 0,
             "item": {
@@ -2974,64 +2974,94 @@ class TestStreamingMessagePhase:
                 "content": [],
             },
         }
-        self.converter.stream_response_from_provider(chunk, context=ctx)
-        assert ctx.metadata.get("_responses_phase") == "commentary"
+        self.converter.stream_response_from_provider(added, context=ctx)
+        events = self.converter.stream_response_from_provider(
+            {
+                "type": "response.content_part.added",
+                "item_id": "msg_1",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": ""},
+            },
+            context=ctx,
+        )
+        assert events[0]["type"] == "content_block_start"
+        assert events[0]["provider_metadata"] == {
+            "responses_item_id": "msg_1",
+            "responses_phase": "commentary",
+        }
 
-    def test_ir_to_p_emits_phase_in_preamble(self):
-        """Streaming message preamble includes phase from context."""
+    def test_ir_to_p_emits_phase_from_the_block(self):
+        """A tagged block opens an item carrying that phase."""
         ctx = OpenAIResponsesStreamContext()
         ctx.response_id = "resp_test"
-        ctx.metadata["_responses_phase"] = "final_answer"
-
-        events, _ = self._run_stream(
-            [
-                {"type": "stream_start", "response_id": "resp_test", "model": "m"},
-            ]
+        result = self.converter.stream_response_to_provider(
+            cast(
+                ContentBlockStartEvent,
+                {
+                    "type": "content_block_start",
+                    "block_index": 0,
+                    "block_type": "text",
+                    "provider_metadata": {
+                        "responses_item_id": "msg_1",
+                        "responses_phase": "final_answer",
+                    },
+                },
+            ),
+            context=ctx,
         )
-        # Phase should not be in stream_start, but check context is set
-        assert ctx.metadata.get("_responses_phase") == "final_answer"
+        assert isinstance(result, list)
+        assert result[0]["type"] == "response.output_item.added"
+        assert result[0]["item"]["phase"] == "final_answer"
 
     def test_streaming_same_format_phase_round_trip(self):
         """Responses streaming → IR → Responses streaming preserves phase."""
         from_ctx = OpenAIResponsesStreamContext()
         from_ctx.mark_started()
         from_ctx.response_id = "resp_test"
-
-        # Simulate upstream output_item.added with phase
-        chunk = {
-            "type": "response.output_item.added",
-            "output_index": 0,
-            "item": {
-                "type": "message",
-                "id": "msg_1",
-                "role": "assistant",
-                "phase": "commentary",
-                "status": "in_progress",
-                "content": [],
-            },
-        }
-        self.converter.stream_response_from_provider(chunk, context=from_ctx)
-        assert from_ctx.metadata.get("_responses_phase") == "commentary"
-
-        # Now simulate ir→p with a to_ctx that has phase bridged
         to_ctx = OpenAIResponsesStreamContext()
         to_ctx.response_id = "resp_test"
-        to_ctx.metadata["_responses_phase"] = from_ctx.metadata["_responses_phase"]
 
-        # Emit a text delta which triggers message preamble
-        text_ev = {"type": "text_delta", "text": "Let me check."}
-        result = self.converter.stream_response_to_provider(text_ev, context=to_ctx)  # ty: ignore[invalid-argument-type]
+        upstream = [
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "status": "in_progress",
+                    "content": [],
+                },
+            },
+            {
+                "type": "response.content_part.added",
+                "item_id": "msg_1",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": ""},
+            },
+            {
+                "type": "response.output_text.delta",
+                "item_id": "msg_1",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "Let me check.",
+            },
+        ]
 
-        if isinstance(result, list):
-            added = [
-                r
-                for r in result
-                if isinstance(r, dict) and r.get("type") == "response.output_item.added"
-            ]
-        else:
-            added = (
-                [result] if result.get("type") == "response.output_item.added" else []
-            )
+        added: list[dict[str, Any]] = []
+        for chunk in upstream:
+            for ir_event in self.converter.stream_response_from_provider(
+                chunk, context=from_ctx
+            ):
+                out = self.converter.stream_response_to_provider(
+                    ir_event, context=to_ctx
+                )
+                for emitted in out if isinstance(out, list) else [out]:
+                    if emitted.get("type") == "response.output_item.added":
+                        added.append(emitted)
 
         assert len(added) == 1
         assert added[0]["item"].get("phase") == "commentary"
@@ -3119,24 +3149,24 @@ class TestStreamingRefusal:
         assert result[2]["type"] == "response.refusal.delta"
         assert result[2]["delta"] == "Sorry"
 
-    def test_refusal_delta_accumulates_in_context(self):
-        """Refusal deltas accumulate in context.accumulated_refusal."""
+    def test_refusal_delta_accumulates_on_the_item(self):
+        """Refusal deltas accumulate on the message item they belong to."""
         ctx = OpenAIResponsesStreamContext()
         ctx.response_id = "resp_test"
         for text in ["I ", "cannot ", "help"]:
             event = cast(RefusalDeltaEvent, {"type": "refusal_delta", "refusal": text})
             self.converter.stream_response_to_provider(event, context=ctx)
-        assert ctx.accumulated_refusal == "I cannot help"
+        item = ctx.current_message_item
+        assert item is not None
+        assert item.accumulated_refusal == "I cannot help"
 
     def test_content_block_end_refusal_with_context(self):
         """ContentBlockEndEvent after refusal emits refusal.done + content_part.done."""
         ctx = OpenAIResponsesStreamContext()
         ctx.response_id = "resp_test"
         ctx.current_block_type = "refusal"
-        ctx.accumulated_refusal = "I cannot help with that."
-        ctx.output_item_emitted = True
-        ctx._message_output_index = 0
-        ctx.item_id = "msg_resp_test"
+        item = ctx.start_message_item("msg_resp_test", 0, content_part_type="refusal")
+        item.accumulated_refusal = "I cannot help with that."
         end_event = cast(
             ContentBlockEndEvent,
             {"type": "content_block_end", "block_index": 0},
@@ -3155,10 +3185,8 @@ class TestStreamingRefusal:
         ctx = OpenAIResponsesStreamContext()
         ctx.response_id = "resp_test"
         ctx.current_block_type = "text"
-        ctx.accumulated_text = "Hello world"
-        ctx.output_item_emitted = True
-        ctx._message_output_index = 0
-        ctx.item_id = "msg_resp_test"
+        item = ctx.start_message_item("msg_resp_test", 0)
+        item.accumulated_text = "Hello world"
         end_event = cast(
             ContentBlockEndEvent,
             {"type": "content_block_end", "block_index": 0},
@@ -3277,3 +3305,256 @@ class TestStreamingRefusal:
             self.converter.stream_response_from_provider(done, context=ctx),
         )
         assert [e for e in events if e["type"] == "tool_call_delta"] == []
+
+
+class TestStreamingMultipleMessageItems:
+    """A turn's several message items stream as several items (#997)."""
+
+    @staticmethod
+    def _message_item_chunks(
+        item_id: str, phase: str, text: str, output_index: int
+    ) -> list[dict[str, Any]]:
+        """One upstream message item, from added through done.
+
+        ``output_index`` is the index the upstream reports for the item.  The
+        client-side indices are allocated by the write leg from the IR blocks
+        instead, so the tests below assert the client's numbering separately
+        from what the fixture sends here.
+        """
+        item = {
+            "id": item_id,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "phase": phase,
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": text,
+                    "annotations": [],
+                    "logprobs": [],
+                }
+            ],
+        }
+        return [
+            {
+                "type": "response.output_item.added",
+                "output_index": output_index,
+                "item": {**item, "status": "in_progress", "content": []},
+            },
+            {
+                "type": "response.content_part.added",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": "", "annotations": []},
+            },
+            {
+                "type": "response.output_text.delta",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "delta": text,
+            },
+            {
+                "type": "response.output_text.done",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "text": text,
+            },
+            {
+                "type": "response.content_part.done",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "part": {
+                    "type": "output_text",
+                    "text": text,
+                    "annotations": [],
+                    "logprobs": [],
+                },
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": output_index,
+                "item": item,
+            },
+        ]
+
+    @classmethod
+    def _run(cls, *chunks: dict[str, Any]) -> list[dict[str, Any]]:
+        pipeline = ConversionPipeline(
+            "openai_responses", "openai_responses", baseline=False
+        )
+        pipeline.convert_request({"model": "gpt-test", "input": "hi", "stream": True})
+        processor = pipeline.create_stream_processor()
+        return [event for chunk in chunks for event in processor.process_chunk(chunk)]
+
+    @classmethod
+    def _commentary_then_final_answer(cls) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "response.created",
+                "response": {
+                    "id": "resp_phase_1",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                },
+            },
+            *cls._message_item_chunks("msg_1", "commentary", "X.", 0),
+            *cls._message_item_chunks("msg_2", "final_answer", "X.", 1),
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_phase_1",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                    "status": "completed",
+                    "output": [],
+                },
+            },
+        ]
+
+    def test_each_item_opens_its_own_output_item(self):
+        """The second item must not fold into the first one's index."""
+        events = self._run(*self._commentary_then_final_answer())
+        added = [
+            event
+            for event in events
+            if event["type"] == "response.output_item.added"
+            and event["item"]["type"] == "message"
+        ]
+        assert [event["item"]["phase"] for event in added] == [
+            "commentary",
+            "final_answer",
+        ]
+        assert [event["output_index"] for event in added] == [0, 1]
+        assert len({event["item"]["id"] for event in added}) == 2
+
+    def test_client_indices_come_from_the_ir_not_the_upstream(self):
+        """Our numbering is the blocks', not the upstream's index numbers.
+
+        The upstream index is only advisory: the read leg allocates block
+        indices and the write leg numbers items as it opens them, so a
+        stream that reports the same index for both items still reaches
+        the client as two items.
+        """
+        chunks = [
+            {
+                "type": "response.created",
+                "response": {
+                    "id": "resp_phase_1",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                },
+            },
+            *self._message_item_chunks("msg_1", "commentary", "X.", 0),
+            *self._message_item_chunks("msg_2", "final_answer", "X.", 0),
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_phase_1",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                    "status": "completed",
+                    "output": [],
+                },
+            },
+        ]
+        events = self._run(*chunks)
+        added = [
+            event
+            for event in events
+            if event["type"] == "response.output_item.added"
+            and event["item"]["type"] == "message"
+        ]
+        assert [event["output_index"] for event in added] == [0, 1]
+        assert len({event["item"]["id"] for event in added}) == 2
+
+    def test_no_delta_lands_on_the_previous_item(self):
+        """Every part event names the item it belongs to."""
+        events = self._run(*self._commentary_then_final_answer())
+        by_item: dict[str, int] = {}
+        for event in events:
+            if event["type"] not in (
+                "response.output_text.delta",
+                "response.output_text.done",
+                "response.content_part.done",
+                "response.output_item.done",
+            ):
+                continue
+            item_id = event.get("item_id") or event["item"]["id"]
+            by_item[item_id] = by_item.get(item_id, 0) + 1
+        # One delta, one text done, one part done, one item done — per item.
+        assert sorted(by_item.values()) == [4, 4]
+
+    def test_first_item_is_closed_before_the_second_opens(self):
+        """The done of item 1 precedes the added of item 2, as upstream does."""
+        events = self._run(*self._commentary_then_final_answer())
+        kinds = [
+            (event["type"], event.get("output_index"))
+            for event in events
+            if event["type"]
+            in ("response.output_item.added", "response.output_item.done")
+        ]
+        assert kinds.index(("response.output_item.done", 0)) < kinds.index(
+            ("response.output_item.added", 1)
+        )
+
+    def test_completed_response_holds_both_items_once(self):
+        """response.completed carries each item's text once, with its phase."""
+        events = self._run(*self._commentary_then_final_answer())
+        completed = next(
+            event for event in events if event["type"] == "response.completed"
+        )
+        messages = [
+            item
+            for item in completed["response"]["output"]
+            if item["type"] == "message"
+        ]
+        assert [item["phase"] for item in messages] == ["commentary", "final_answer"]
+        assert [[part["text"] for part in item["content"]] for item in messages] == [
+            ["X."],
+            ["X."],
+        ]
+        assert len({item["id"] for item in messages}) == 2
+
+    def test_a_single_item_stream_keeps_one_id(self):
+        """An ordinary stream still emits one item, opened once."""
+        events = self._run(
+            {
+                "type": "response.created",
+                "response": {
+                    "id": "resp_single",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                },
+            },
+            *self._message_item_chunks("msg_1", "final_answer", "Only once.", 0),
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_single",
+                    "model": "gpt-test",
+                    "created_at": 1_700_000_000,
+                    "status": "completed",
+                    "output": [],
+                },
+            },
+        )
+        added = [
+            event
+            for event in events
+            if event["type"] == "response.output_item.added"
+            and event["item"]["type"] == "message"
+        ]
+        done = [
+            event
+            for event in events
+            if event["type"] == "response.output_item.done"
+            and event["item"]["type"] == "message"
+        ]
+        assert len(added) == 1
+        assert len(done) == 1
+        assert added[0]["item"]["id"] == done[0]["item"]["id"]

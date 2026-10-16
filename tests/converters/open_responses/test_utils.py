@@ -67,7 +67,8 @@ class TestBuildMessagePreambleEvents:
         assert item["type"] == "message"
         assert item["role"] == "assistant"
         assert item["content"] == []
-        assert item["id"] == "msg_resp_123"
+        assert item["id"] == events[1]["item_id"]
+        assert item["id"].startswith("msg_")
 
     def test_second_event_is_content_part_added(self):
         events = build_message_preamble_events(self.ctx)
@@ -77,15 +78,28 @@ class TestBuildMessagePreambleEvents:
         assert part["type"] == "output_text"
         assert part["text"] == ""
 
-    def test_sets_output_item_emitted(self):
-        assert self.ctx.output_item_emitted is False
-        build_message_preamble_events(self.ctx)
-        assert self.ctx.output_item_emitted is True
+    def test_registers_the_item_on_the_context(self):
+        assert self.ctx.current_message_item is None
+        events = build_message_preamble_events(self.ctx)
+        item = self.ctx.current_message_item
+        assert item is not None
+        assert item.item_id == events[0]["item"]["id"]
 
-    def test_stores_item_id_on_context(self):
-        assert self.ctx.item_id == ""
-        build_message_preamble_events(self.ctx)
-        assert self.ctx.item_id == "msg_resp_123"
+    def test_each_call_opens_a_new_item_with_its_own_id(self):
+        first = build_message_preamble_events(self.ctx)
+        second = build_message_preamble_events(self.ctx)
+        assert first[0]["item"]["id"] != second[0]["item"]["id"]
+        assert second[0]["output_index"] == 1
+        assert len(self.ctx._message_items) == 2
+
+    def test_carries_phase_and_source_item(self):
+        events = build_message_preamble_events(
+            self.ctx, phase="commentary", source_item_id="msg_upstream"
+        )
+        assert events[0]["item"]["phase"] == "commentary"
+        item = self.ctx.current_message_item
+        assert item is not None
+        assert (item.phase, item.source_item_id) == ("commentary", "msg_upstream")
 
     def test_output_index_from_counter(self):
         # Simulate reasoning item already allocated index 0
@@ -102,4 +116,6 @@ class TestBuildMessagePreambleEvents:
     def test_stores_message_output_index(self):
         self.ctx.next_output_index()  # reasoning takes 0
         build_message_preamble_events(self.ctx)
-        assert self.ctx._message_output_index == 1
+        item = self.ctx.current_message_item
+        assert item is not None
+        assert item.output_index == 1

@@ -23,6 +23,30 @@ class ReasoningItemState:
 
 
 @dataclass
+class MessageItemState:
+    """One message item being assembled on the outbound stream.
+
+    A turn can hold several: an upstream that reports its commentary apart
+    from its final answer streams two message items, and each carries its
+    own id, phase and accumulated text.  Collapsing them into one slot
+    merges the items client-side, which renders the reply twice (#997).
+    """
+
+    item_id: str
+    output_index: int = -1
+    phase: str = ""
+    #: Id of the upstream item this one mirrors (IR → Responses leg).  Kept
+    #: so a later text block can tell a continuation of the same item from
+    #: the start of a new one.
+    source_item_id: str = ""
+    accumulated_text: str = ""
+    accumulated_refusal: str = ""
+    content_part_type: str = "output_text"
+    content_part_done_emitted: bool = False
+    output_item_done_emitted: bool = False
+
+
+@dataclass
 class OpenResponsesStreamContext(StreamContext):
     """Stream context with OpenAI Responses API specific state.
 
@@ -33,29 +57,20 @@ class OpenResponsesStreamContext(StreamContext):
     Attributes:
         item_id_to_call_id: Reverse mapping from Responses item_id to
             tool call_id for function call argument delta resolution.
-        output_item_emitted: Whether the initial message output_item.added
-            and content_part.added events have been emitted.
-        item_id: Current output item ID for the response message.
-        accumulated_text: Accumulated text deltas for the final
-            response.completed payload.
-        content_part_done_emitted: Whether content_part.done has been
-            emitted (prevents duplicate emission).
+        _message_items: Message items assembled outbound (IR → Responses),
+            in arrival order.  ``current_message_item`` is the one being
+            written.
     """
 
     # Message item tracking
     item_id_to_call_id: dict[str, str] = field(default_factory=dict)
-    output_item_emitted: bool = False
-    item_id: str = ""
-    accumulated_text: str = ""
-    accumulated_refusal: str = ""
-    content_part_done_emitted: bool = False
+    _message_items: list[MessageItemState] = field(default_factory=list, repr=False)
     _sequence_number: int = 0
 
     # Unified output item counter — allocates output_index for all item
     # types (reasoning, message, tool call).  Call next_output_index()
     # ONLY when emitting output_item.added.
     _output_item_counter: int = 0
-    _message_output_index: int = -1
 
     # Tool call output_index storage (call_id → assigned index)
     _tool_call_output_indices: dict[str, int] = field(default_factory=dict, repr=False)
@@ -75,6 +90,49 @@ class OpenResponsesStreamContext(StreamContext):
     # IR), used to tag deltas with their source item.  Separate from
     # _reasoning_items: inbound and outbound use different contexts.
     _inbound_reasoning_item_id: str = ""
+
+    # The message item currently streaming inbound (Responses → IR).  The
+    # text or refusal blocks that follow carry this id and phase, so the
+    # write leg can tell one of the turn's message items from the next.
+    # Inbound-only, like _inbound_reasoning_item_id.
+    _inbound_message_item_id: str = ""
+    _inbound_message_phase: str = ""
+
+    def start_message_item(
+        self,
+        item_id: str,
+        output_index: int,
+        *,
+        phase: str = "",
+        source_item_id: str = "",
+        content_part_type: str = "output_text",
+    ) -> MessageItemState:
+        """Begin a new outbound message item and return its state.
+
+        Args:
+            item_id: Id the item is emitted under.
+            output_index: Its index in the response's output array.
+            phase: Upstream phase, when the item reports one.
+            source_item_id: Id of the upstream item it mirrors, if known.
+            content_part_type: ``"output_text"`` or ``"refusal"``.
+
+        Returns:
+            The new item state, also now the current one.
+        """
+        item = MessageItemState(
+            item_id=item_id,
+            output_index=output_index,
+            phase=phase,
+            source_item_id=source_item_id,
+            content_part_type=content_part_type,
+        )
+        self._message_items.append(item)
+        return item
+
+    @property
+    def current_message_item(self) -> MessageItemState | None:
+        """The most recently started outbound message item."""
+        return self._message_items[-1] if self._message_items else None
 
     def reasoning_item(self, item_id: str) -> ReasoningItemState | None:
         """Return the outbound reasoning item with this id, if started."""
@@ -156,6 +214,9 @@ class OpenResponsesStreamContext(StreamContext):
         # _tool_call_groups: populated at tool_call_start events
         # _reasoning_items: appended as reasoning items start
         # _inbound_reasoning_item_id: set at reasoning output_item events
+        # _message_items: appended as message items start
+        # _inbound_message_item_id / _inbound_message_phase: set at message
+        #   output_item events
         return ctx
 
     def register_tool_call_item(self, tool_call_id: str, item_id: str) -> None:
