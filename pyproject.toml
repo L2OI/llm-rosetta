@@ -67,6 +67,7 @@ Issues = "https://github.com/Oaklight/llm-rosetta/issues"
 
 [project.scripts]
 llm-rosetta-gateway = "llm_rosetta.gateway:main"
+llm-rosetta-usage = "llm_rosetta.observability.usage.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

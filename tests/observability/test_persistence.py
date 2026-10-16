@@ -428,3 +428,94 @@ class TestBackfillTotalTokens:
         assert after_first == after_second
         # 1 derived Messages row + 1 blank row; the OpenAI row keeps its own.
         assert first == 2
+
+
+class TestUsageByModel:
+    """The reading that answers "which models moved the tokens".
+
+    The subject cut answers who spent them; the model name is a column of the
+    row rather than an attribution, so it is a second read.  It feeds the usage
+    CLI's model table, which is why the two must agree about a row's model
+    type and about what a window means.
+    """
+
+    @staticmethod
+    def _row(
+        row_id: str,
+        model: str,
+        total: int,
+        *,
+        model_type: str | None = None,
+        minutes: int = 5,
+    ) -> dict:
+        from datetime import datetime, timedelta, timezone
+
+        entry = RequestLogEntry.create(
+            model=model,
+            source_provider="chat_completions",
+            target_provider="chat_completions",
+            is_stream=False,
+            status_code=200,
+            duration_ms=1.0,
+            input_tokens=total,
+            output_tokens=0,
+            total_tokens=total,
+        )
+        row = entry.to_dict() | {"id": row_id}
+        row["timestamp"] = (
+            datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        ).isoformat()
+        if model_type is not None:
+            row["model_type"] = model_type
+        return row
+
+    @pytest.mark.asyncio
+    async def test_one_model_keeps_its_types_apart(self, pm):
+        """The same name can serve two model types, and each is its own row."""
+        await pm.insert_log_entries(
+            [
+                self._row("chat", "shared-name", 100, model_type="llm"),
+                self._row("embed", "shared-name", 300, model_type="embedding"),
+            ]
+        )
+
+        groups = (await pm.query_usage_by_model())["groups"]
+        by_type = {group["model_type"]: group["windows"]["24h"] for group in groups}
+        assert by_type["llm"]["total_tokens"] == 100
+        assert by_type["llm"]["request_count"] == 1
+        assert by_type["embedding"]["total_tokens"] == 300
+
+    @pytest.mark.asyncio
+    async def test_the_biggest_model_comes_first(self, pm):
+        """Ordered by the widest window, so the leader is the month's leader."""
+        await pm.insert_log_entries(
+            [
+                self._row("small", "gpt-5-nano", 10),
+                self._row("big", "gpt-5", 900),
+            ]
+        )
+
+        groups = (await pm.query_usage_by_model())["groups"]
+        assert [group["model"] for group in groups] == ["gpt-5", "gpt-5-nano"]
+
+    @pytest.mark.asyncio
+    async def test_a_row_predating_the_column_counts_as_chat(self, pm):
+        """A row written before ``model_type`` existed has no type to report."""
+        await pm.insert_log_entries([self._row("old", "gpt-5", 40)])
+
+        groups = (await pm.query_usage_by_model())["groups"]
+        assert groups[0]["model_type"] == "llm"
+
+    @pytest.mark.asyncio
+    async def test_the_windows_narrow_with_age(self, pm):
+        """A row older than a day is in the week and out of the day."""
+        await pm.insert_log_entries(
+            [
+                self._row("today", "gpt-5", 100, minutes=10),
+                self._row("yesterday", "gpt-5", 7, minutes=60 * 30),
+            ]
+        )
+
+        windows = (await pm.query_usage_by_model())["groups"][0]["windows"]
+        assert windows["24h"]["total_tokens"] == 100
+        assert windows["7d"]["total_tokens"] == 107

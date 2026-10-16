@@ -20,8 +20,8 @@ import json
 import logging
 import sqlite3
 import warnings
-from datetime import datetime, timezone
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from datetime import datetime, timedelta, timezone
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -143,18 +143,60 @@ class PersistenceManager:
         # in all methods (callers must use create() or _open() first).
         self._conn: aiosqlite.Connection = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
-    async def _open(self) -> None:
-        """Open the database connection, create tables, and run migrations."""
-        if self.db_path.exists():
-            await self._create_backup()
-            self._integrity_check()
-        self._conn = await aiosqlite.connect(str(self.db_path))
-        await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.execute("PRAGMA synchronous=NORMAL")
-        await self._conn.execute("PRAGMA foreign_keys=ON")
-        await self._init_tables()
-        await self._run_migrations()
-        await self._migrate_legacy()
+    async def _open(self, *, backup: bool = True, migrate: bool = True) -> None:
+        """Open the database connection, create tables, and run migrations.
+
+        ``backup=False`` skips the pre-open backup.  A long-running gateway
+        wants that copy of the file before the code touches it; a read-mostly
+        caller (the usage CLI) would otherwise stamp a new backup into the
+        data directory on every invocation.
+
+        ``migrate=False`` opens the store **read-only**: SQLite's own read-only
+        mode, no pre-open backup, no integrity check, no table creation, no
+        versioned migrations, no legacy-file import, and none of the write-mode
+        pragmas.  It is for a caller reading a store it does not own — SQLite
+        then refuses the write rather than the code having to remember not to
+        make one — and it assumes the caller has checked
+        :meth:`expected_schema_version` against :meth:`read_schema_version`
+        first: a store that is behind would be read with the wrong shape rather
+        than migrated, and a fresh directory would have no tables at all.
+
+        What a read-only open needs from the filesystem is SQLite's rule, not
+        this code's, and it is narrower than it sounds: with the ``-wal`` and
+        ``-shm`` sidecars already present, a read-only connection attaches to
+        them and the **directory** may be read-only too; it needs write access
+        to those sidecar *files*, and write access to the directory only when it
+        has to create them.  A store with a pending ``-wal`` and no ``-shm``
+        therefore cannot be read from a read-only directory at all — SQLite sees
+        an empty database, so the schema reads as nothing
+        (:meth:`read_schema_version` returns ``None`` rather than 0 for exactly
+        that reason).
+        """
+        if migrate:
+            if self.db_path.exists():
+                if backup:
+                    await self._create_backup()
+                self._integrity_check()
+            self._conn = await aiosqlite.connect(str(self.db_path))
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("PRAGMA synchronous=NORMAL")
+            await self._conn.execute("PRAGMA foreign_keys=ON")
+            await self._init_tables()
+            await self._run_migrations()
+            await self._migrate_legacy()
+            return
+        self._conn = await aiosqlite.connect(
+            f"{self.db_path.resolve().as_uri()}?mode=ro", uri=True
+        )
+
+    @classmethod
+    def expected_schema_version(cls) -> int:
+        """The version this build's migrations bring a store to.
+
+        Read by a caller that must decide whether it may open a store without
+        migrating it: see ``_open(..., migrate=False)``.
+        """
+        return max(version for version, _description, _sql in cls._MIGRATIONS)
 
     @classmethod
     async def create(
@@ -168,10 +210,15 @@ class PersistenceManager:
         ops_warn_max: int | None = None,
         ops_log_max: int | None = None,
         wal_max_bytes: int | None = None,
+        backup: bool = True,
+        migrate: bool = True,
     ) -> PersistenceManager:
         """Async factory: create a PersistenceManager with an open connection.
 
         This is the preferred way to construct instances in async code.
+        ``backup`` and ``migrate`` are passed to :meth:`_open`; both default to
+        the gateway's behaviour, and a caller that must not write to the store
+        turns both off after checking the schema itself.
         """
         instance = cls(
             data_dir,
@@ -183,7 +230,7 @@ class PersistenceManager:
             ops_log_max=ops_log_max,
             wal_max_bytes=wal_max_bytes,
         )
-        await instance._open()
+        await instance._open(backup=backup, migrate=migrate)
         return instance
 
     @property
@@ -400,14 +447,28 @@ class PersistenceManager:
             logger.info("Migration v%d applied", version)
 
     async def schema_version(self) -> int:
-        """Return the current schema version number."""
+        """Return the current schema version number, 0 when it cannot be read."""
+        version = await self.read_schema_version()
+        return version if version is not None else 0
+
+    async def read_schema_version(self) -> int | None:
+        """The store's schema version, or ``None`` when there is none to read.
+
+        :meth:`schema_version` reports 0 for both "a database with no
+        ``schema_version`` table" and "a database that could not be read at
+        all", which is fine for a caller that only compares numbers and wrong
+        for one that must explain itself: a store whose write-ahead log cannot
+        be attached reads as *empty*, so it looks like a store that was never
+        migrated.  A caller about to refuse is the one that needs the
+        difference.
+        """
         try:
             row = await self._conn.execute_fetchone(
                 "SELECT MAX(version) FROM schema_version"
             )
-            return row[0] if row and row[0] is not None else 0
         except Exception:
-            return 0
+            return None
+        return row[0] if row and row[0] is not None else 0
 
     async def backfill_provider_names(
         self, model_to_provider: Mapping[str, str]
@@ -2030,58 +2091,115 @@ class PersistenceManager:
             ``request_count`` plus the token totals.  Buckets with no traffic
             in the widest window are absent.
         """
-        from datetime import datetime, timedelta, timezone
-
-        now = datetime.now(timezone.utc)
-        cutoffs = {
-            name: (now - timedelta(hours=hours)).isoformat()
-            for name, hours in USAGE_WINDOWS
-        }
-
-        select_parts = ["api_key_bucket", "api_key_label", "model_type"]
-        params: list[Any] = []
-        for name, _hours in USAGE_WINDOWS:
-            select_parts.append("COUNT(CASE WHEN timestamp >= ? THEN 1 END)")
-            params.append(cutoffs[name])
-            for col in LEDGER_COLUMNS:
-                select_parts.append(
-                    f"COALESCE(SUM(CASE WHEN timestamp >= ? THEN {col} ELSE 0 END), 0)"
-                )
-                params.append(cutoffs[name])
-        params.append(cutoffs[USAGE_WINDOWS[-1][0]])
-
+        select, params, since = self._usage_window_select(
+            ("api_key_bucket", "api_key_label", "model_type")
+        )
         rows = await self._conn.execute_fetchall(
-            f"SELECT {', '.join(select_parts)} FROM request_log "
+            f"SELECT {select} FROM request_log "
             "WHERE timestamp >= ? "
             "GROUP BY api_key_bucket, api_key_label, model_type",
-            params,
+            [*params, since],
         )
 
-        groups: list[dict[str, Any]] = []
         # One COUNT plus the token columns per window; the three leading columns
         # are the bucket, the label and the model type.
+        groups = self._fold_window_rows(rows, ("bucket", "label", "model_type"))
+        for group in groups:
+            group["model_type"] = group["model_type"] or DEFAULT_MODEL_TYPE
+        return {
+            "windows": [name for name, _hours in USAGE_WINDOWS],
+            "groups": groups,
+        }
+
+    @staticmethod
+    def _usage_window_select(
+        leading: Sequence[str],
+    ) -> tuple[str, list[Any], str]:
+        """The conditional-aggregation select for one usage read.
+
+        Several reads ask the same question of the same table — "how much, in
+        each rolling window" — and differ only in what they group by, so the
+        select is built here rather than spelled out once per read with a
+        chance to drift apart each time.  The caller appends its own ``GROUP
+        BY`` and ``ORDER BY``.
+
+        Args:
+            leading: The columns to group by, in order.
+
+        Returns:
+            The select list, its parameters (one cutoff per counter, in the
+            order they appear), and the widest window's cutoff — the bound the
+            caller puts on ``timestamp`` so a read that only reports the narrow
+            windows still skips the rows no window can see.
+        """
+        now = datetime.now(timezone.utc)
+        parts = list(leading)
+        params: list[Any] = []
+        for _name, hours in USAGE_WINDOWS:
+            cutoff = (now - timedelta(hours=hours)).isoformat()
+            parts.append("COUNT(CASE WHEN timestamp >= ? THEN 1 END)")
+            params.append(cutoff)
+            for col in LEDGER_COLUMNS:
+                parts.append(
+                    f"COALESCE(SUM(CASE WHEN timestamp >= ? THEN {col} ELSE 0 END), 0)"
+                )
+                params.append(cutoff)
+        return (
+            ", ".join(parts),
+            params,
+            (now - timedelta(hours=USAGE_WINDOWS[-1][1])).isoformat(),
+        )
+
+    @staticmethod
+    def _fold_window_rows(
+        rows: Sequence[Sequence[Any]], leading: Sequence[str]
+    ) -> list[dict[str, Any]]:
+        """Fold a usage read's rows into one dict per group.
+
+        The columns come back in the order :meth:`_usage_window_select` built
+        them: the leading columns, then for each window a count and the ledger
+        columns in order.
+        """
         stride = 1 + len(LEDGER_COLUMNS)
+        folded: list[dict[str, Any]] = []
         for row in rows:
             windows: dict[str, dict[str, int]] = {}
-            idx = 3
+            idx = len(leading)
             for name, _hours in USAGE_WINDOWS:
                 window: dict[str, int] = {"request_count": row[idx]}
                 for offset, col in enumerate(LEDGER_COLUMNS, start=1):
                     window[col] = row[idx + offset]
                 windows[name] = window
                 idx += stride
-            groups.append(
-                {
-                    "bucket": row[0],
-                    "label": row[1],
-                    "model_type": row[2] or DEFAULT_MODEL_TYPE,
-                    "windows": windows,
-                }
-            )
-        return {
-            "windows": [name for name, _hours in USAGE_WINDOWS],
-            "groups": groups,
-        }
+            folded.append({**dict(zip(leading, row)), "windows": windows})
+        return folded
+
+    async def query_usage_by_model(self) -> dict[str, Any]:
+        """Aggregate token usage per model and model type.
+
+        The cut a caller wants when the question is "which models moved the
+        tokens" rather than "who spent them": the model name is a column of the
+        row, not an attribution, so it is its own read rather than a dim of
+        :meth:`query_usage_groups`.  Rows are grouped by ``(model, model_type)``
+        so one model's chat and embedding traffic stay distinguishable.
+
+        Returns:
+            ``{"windows": [...], "groups": [...]}``, each group being
+            ``{"model": str, "model_type": str, "windows": {...}}``, widest
+            window's total first.
+        """
+        select, params, since = self._usage_window_select(("model", "model_type"))
+        # The rows are already bounded to the widest window, so the ordering
+        # sum is that window's total for the model.
+        rows = await self._conn.execute_fetchall(
+            f"SELECT {select} FROM request_log WHERE timestamp >= ? "
+            "GROUP BY model, model_type ORDER BY SUM(total_tokens) DESC, model",
+            [*params, since],
+        )
+        groups = self._fold_window_rows(rows, ("model", "model_type"))
+        for group in groups:
+            group["model_type"] = group["model_type"] or DEFAULT_MODEL_TYPE
+        return {"windows": [name for name, _hours in USAGE_WINDOWS], "groups": groups}
 
     async def backfill_usage_buckets(self, label_to_bucket: Mapping[str, str]) -> int:
         """Attribute logged requests that carry no credential bucket.

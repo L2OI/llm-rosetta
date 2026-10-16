@@ -46,10 +46,14 @@ be attributed, and where the rows are stored::
     report = UsageReport.build(
         groups=await persistence.query_usage_groups(),
         subjects=[(bucket, label) for ...],       # live credentials
-        internal_subject=INTERNAL_USAGE_BUCKET,
+        internal_subject=INTERNAL_SUBJECT,
         internal_label=INTERNAL_LABEL,
     )
     report.to_payload({bucket: key_id for ...})
+
+The package also carries the entry point a shell user runs instead of writing
+any of the above: ``llm-rosetta-usage`` (:mod:`~llm_rosetta.observability.usage.cli`)
+reads one store and prints the same report — see its module docstring.
 """
 
 from __future__ import annotations
@@ -57,6 +61,8 @@ from __future__ import annotations
 from .ledger import UsageLedger, UsageRecord
 from .normalize import IR_FIELDS, LEDGER_COLUMNS, token_total, usage_columns
 from .report import (
+    INTERNAL_LABEL,
+    INTERNAL_SUBJECT,
     NO_SUBJECT_LABEL,
     USAGE_WINDOW_LABELS,
     USAGE_WINDOWS,
@@ -80,6 +86,8 @@ from .semantics import (
 __all__ = [
     "ADDITIVE_CACHE_STANDARDS",
     "GOOGLE_METADATA",
+    "INTERNAL_LABEL",
+    "INTERNAL_SUBJECT",
     "IR_FIELDS",
     "LEDGER_COLUMNS",
     "MESSAGES_FIELDS",

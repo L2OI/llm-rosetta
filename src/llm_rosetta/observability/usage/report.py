@@ -42,6 +42,8 @@ __all__ = [
     "INTERNAL_KEY",
     "UNATTRIBUTED_KEY",
     "NO_SUBJECT_LABEL",
+    "INTERNAL_SUBJECT",
+    "INTERNAL_LABEL",
     "SubjectUsage",
     "UsageReport",
     "add_windows",
@@ -68,6 +70,15 @@ UNATTRIBUTED_KEY = "unattributed"
 #: Label shown for rows that carry no label at all — an anonymous request, or a
 #: subject created without one.
 NO_SUBJECT_LABEL = "(no credential)"
+
+#: The subject and label a gateway's own traffic is reported under — the admin
+#: panel's token, which every dashboard counts.  The pair is fixed here, beside
+#: the classification that reads it, so the code that writes those rows (the
+#: gateway's keystore) and any reader that groups them (the usage CLI) name one
+#: thing once.  A caller with no traffic of its own — a library user — leaves
+#: ``internal_subject`` unset in :meth:`UsageReport.build` instead.
+INTERNAL_SUBJECT = "internal"
+INTERNAL_LABEL = "internal"
 
 Windows = dict[str, dict[str, int]]
 

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_rosetta._vendor import aiosqlite
+from llm_rosetta.observability.usage import INTERNAL_LABEL, INTERNAL_SUBJECT
 
 logger = logging.getLogger("llm-rosetta.keystore")
 
@@ -51,11 +52,13 @@ def _generate_id() -> str:
 # The admin panel's own token authenticates its test traffic.  That traffic
 # is real usage the dashboard counts, so it is attributed like any credential
 # — through a bucket of its own.  The value is deliberately not a uuid5 hex,
-# which no credential bucket can ever collide with.
-INTERNAL_USAGE_BUCKET = "internal"
-
-# Label that token's rows carry, and the label a key gets when none is given.
-INTERNAL_LABEL = "internal"
+# which no credential bucket can ever collide with.  It is the same subject the
+# usage report classes as "internal", so it is named there and imported here:
+# the writer and the reader of those rows cannot drift apart.
+INTERNAL_USAGE_BUCKET = INTERNAL_SUBJECT
+# ``INTERNAL_LABEL`` is imported above and exported from this module too: this
+# is where the gateway's key vocabulary lives, so its readers (the auth
+# middleware, the admin routes) need one import, not two.
 
 
 # Fixed namespace for the deterministic per-credential usage bucket.  The

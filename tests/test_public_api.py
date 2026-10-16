@@ -103,6 +103,8 @@ EXPECTED_EXPORTS: dict[str, _ModuleSpec] = {
         "items": [
             "ADDITIVE_CACHE_STANDARDS",
             "GOOGLE_METADATA",
+            "INTERNAL_LABEL",
+            "INTERNAL_SUBJECT",
             "IR_FIELDS",
             "LEDGER_COLUMNS",
             "MESSAGES_FIELDS",
@@ -124,7 +126,7 @@ EXPECTED_EXPORTS: dict[str, _ModuleSpec] = {
             "usage_columns",
             "zero_windows",
         ],
-        "max_count": 22,
+        "max_count": 24,
     },
 }
 
